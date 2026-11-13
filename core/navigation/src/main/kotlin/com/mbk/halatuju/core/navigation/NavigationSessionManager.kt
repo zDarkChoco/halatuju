@@ -1,7 +1,10 @@
 package com.mbk.halatuju.core.navigation
 
+import com.mbk.halatuju.core.location.GpxRecorder
 import com.mbk.halatuju.core.location.LocationSource
 import com.mbk.halatuju.core.location.LocationSourceCoordinator
+import com.mbk.halatuju.core.location.RouteSimulationController
+import com.mbk.halatuju.core.location.SimulatedRouteProgressSnapshot
 import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.LocationFix
 import com.mbk.halatuju.core.model.MapCameraMode
@@ -47,7 +50,8 @@ class NavigationSessionManager internal constructor(
     private val foregroundController: NavigationForegroundController = NoOpNavigationForegroundController,
     private val clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
     private val epochMs: () -> Long = { System.currentTimeMillis() },
-    dispatcher: CoroutineDispatcher = Dispatchers.Default
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val onRouteSnapshotChanged: (SimulatedRouteProgressSnapshot) -> Unit = {}
 ) {
     @Inject
     constructor(
@@ -56,15 +60,21 @@ class NavigationSessionManager internal constructor(
         trafficProvider: TrafficProvider,
         settingsStore: SettingsStore,
         voiceGuidancePlayer: VoiceGuidancePlayer,
-        foregroundController: NavigationForegroundController
+        foregroundController: NavigationForegroundController,
+        gpxRecorder: GpxRecorder,
+        routeSimulationController: RouteSimulationController
     ) : this(
         locationSource = locationSourceCoordinator,
-        onFixObserved = { fix -> locationSourceCoordinator.recordLatestFix(fix) },
+        onFixObserved = { fix ->
+            locationSourceCoordinator.recordLatestFix(fix)
+            gpxRecorder.recordFix(fix)
+        },
         router = router,
         trafficProvider = trafficProvider,
         settingsStore = settingsStore,
         voiceGuidancePlayer = voiceGuidancePlayer,
-        foregroundController = foregroundController
+        foregroundController = foregroundController,
+        onRouteSnapshotChanged = { snap -> routeSimulationController.updateRouteSnapshot(snap) }
     )
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -79,6 +89,18 @@ class NavigationSessionManager internal constructor(
     private var lastCameraMode: MapCameraMode = MapCameraMode.NAVIGATION_25D
     private var isMuted: Boolean = false
     private var voiceVolume: Float = 1.0f
+
+    private fun publishState(nextState: NavigationSessionState) {
+        _state.value = nextState
+        onRouteSnapshotChanged(
+            SimulatedRouteProgressSnapshot(
+                route = nextState.route,
+                isPausedAtStop = nextState.status == NavigationStatus.ARRIVED_STOP,
+                isFinished = nextState.status == NavigationStatus.IDLE ||
+                    nextState.status == NavigationStatus.ARRIVED_DESTINATION
+            )
+        )
+    }
 
     fun startNavigation(route: NavRoute) {
         sessionJob?.cancel()
@@ -103,7 +125,7 @@ class NavigationSessionManager internal constructor(
                     cameraMode = lastCameraMode,
                     isMuted = isMuted
                 )
-                _state.value = init.state
+                publishState(init.state)
                 init
             }
             foregroundController.onNavigationStateChanged(initResult.state, settings.unitSystem)
@@ -132,7 +154,7 @@ class NavigationSessionManager internal constructor(
                                 previousState = _state.value
                             )
                             if (dr != null) {
-                                _state.value = dr.state
+                                publishState(dr.state)
                             }
                             dr
                         } else {
@@ -172,7 +194,7 @@ class NavigationSessionManager internal constructor(
                             previousState = _state.value
                         )
                     }
-                    _state.value = stepRes.state
+                    publishState(stepRes.state)
                     foregroundController.onNavigationStateChanged(stepRes.state, curSettings.unitSystem)
                     dispatchAudioFeedback(
                         previousChimeId = fixPrevChime,
@@ -207,7 +229,7 @@ class NavigationSessionManager internal constructor(
         foregroundController.onNavigationStopped()
         scope.launch {
             engineMutex.withLock {
-                _state.value = engine.stop()
+                publishState(engine.stop())
             }
         }
     }
@@ -222,9 +244,11 @@ class NavigationSessionManager internal constructor(
     fun continueToNextStop() {
         scope.launch {
             engineMutex.withLock {
-                _state.value = engine.advancePastIntermediateStop(
-                    nowEpochMs = epochMs(),
-                    currentState = _state.value
+                publishState(
+                    engine.advancePastIntermediateStop(
+                        nowEpochMs = epochMs(),
+                        currentState = _state.value
+                    )
                 )
             }
         }
@@ -232,18 +256,20 @@ class NavigationSessionManager internal constructor(
 
     fun setCameraMode(mode: MapCameraMode) {
         lastCameraMode = mode
-        _state.value = _state.value.copy(
-            cameraMode = mode,
-            cameraState = _state.value.cameraState.copy(
-                mode = mode,
-                tiltDegrees = if (mode == MapCameraMode.NAVIGATION_25D) 52.0 else 0.0
+        publishState(
+            _state.value.copy(
+                cameraMode = mode,
+                cameraState = _state.value.cameraState.copy(
+                    mode = mode,
+                    tiltDegrees = if (mode == MapCameraMode.NAVIGATION_25D) 52.0 else 0.0
+                )
             )
         )
     }
 
     fun toggleMute() {
         isMuted = !isMuted
-        _state.value = _state.value.copy(isMuted = isMuted)
+        publishState(_state.value.copy(isMuted = isMuted))
         if (isMuted) {
             voiceGuidancePlayer.stopSpeaking()
         }
@@ -289,7 +315,7 @@ class NavigationSessionManager internal constructor(
 
             engineMutex.withLock {
                 engine.setRerouting(true)
-                _state.value = _state.value.copy(isRerouting = true)
+                publishState(_state.value.copy(isRerouting = true))
             }
 
             val result = router.calculateRoutes(
@@ -308,20 +334,22 @@ class NavigationSessionManager internal constructor(
                     onSuccess = { newRoutes ->
                         val newRoute = newRoutes.firstOrNull()
                         if (newRoute != null && _state.value.status != NavigationStatus.IDLE) {
-                            _state.value = engine.applyReroutedRoute(
-                                newRoute = newRoute,
-                                nowEpochMs = epochMs(),
-                                clockMs = clockMs(),
-                                currentState = _state.value
+                            publishState(
+                                engine.applyReroutedRoute(
+                                    newRoute = newRoute,
+                                    nowEpochMs = epochMs(),
+                                    clockMs = clockMs(),
+                                    currentState = _state.value
+                                )
                             )
                         } else {
                             engine.setRerouting(false)
-                            _state.value = _state.value.copy(isRerouting = false)
+                            publishState(_state.value.copy(isRerouting = false))
                         }
                     },
                     onFailure = {
                         engine.setRerouting(false)
-                        _state.value = _state.value.copy(isRerouting = false)
+                        publishState(_state.value.copy(isRerouting = false))
                     }
                 )
             }

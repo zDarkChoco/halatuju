@@ -1,7 +1,10 @@
 package com.mbk.halatuju
 
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -51,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,6 +65,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -95,6 +100,9 @@ import com.mbk.halatuju.feature.settings.AboutLicensesScreen
 import com.mbk.halatuju.feature.settings.SettingsScreen
 import com.mbk.halatuju.feature.settings.SettingsViewModel
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private object HalaTujuRoutes {
     const val HOME = "home"
@@ -147,11 +155,14 @@ fun HalaTujuAppRoot(
     mainViewModel: MainViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val settingsViewModel: SettingsViewModel = hiltViewModel()
     val searchViewModel: SearchViewModel = hiltViewModel()
     val navigationViewModel: ActiveNavigationViewModel = hiltViewModel()
     val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
+    val gpxRecordingState by settingsViewModel.gpxRecordingState.collectAsStateWithLifecycle()
+    val gpxReplayState by settingsViewModel.gpxReplayState.collectAsStateWithLifecycle()
     val searchState by searchViewModel.uiState.collectAsStateWithLifecycle()
     val navState by navigationViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -160,6 +171,31 @@ fun HalaTujuAppRoot(
     var dismissedBatteryHint by rememberSaveable { mutableStateOf(false) }
     var requestedNotificationOnStart by rememberSaveable { mutableStateOf(false) }
     var sawActiveNavigationInSession by rememberSaveable { mutableStateOf(false) }
+
+    val gpxOpenLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val (fileName, xml) = withContext(Dispatchers.IO) {
+                    val name = queryDisplayName(context, uri) ?: "imported.gpx"
+                    val content = context.contentResolver
+                        .openInputStream(uri)
+                        ?.bufferedReader()
+                        ?.use { it.readText() }
+                        .orEmpty()
+                    name to content
+                }
+                settingsViewModel.importAndStartGpxReplay(xml, fileName)
+                    .onSuccess { count ->
+                        snackbarHostState.showSnackbar("GPX replay active ($count pts · $fileName)")
+                    }
+                    .onFailure { err ->
+                        snackbarHostState.showSnackbar(err.message ?: "Could not parse GPX file")
+                    }
+            }
+        }
+    }
 
     val isDark = when (settings.themeMode) {
         ThemeMode.FOLLOW_SYSTEM -> isSystemInDarkTheme()
@@ -284,7 +320,9 @@ fun HalaTujuAppRoot(
                         selectedRouteIndex = searchState.routePreview.selectedRouteIndex
                     ),
                     tileSource = mainViewModel.tileSource,
-                    hasLocationPermission = uiState.permissionStatus.hasAnyLocation,
+                    hasLocationPermission = uiState.permissionStatus.hasAnyLocation ||
+                        settings.simulationEnabled ||
+                        uiState.isGpxReplayActive,
                     tiltPreviewEnabled = uiState.tiltPreviewEnabled,
                     searchState = searchState,
                     snackbarHostState = snackbarHostState,
@@ -370,7 +408,9 @@ fun HalaTujuAppRoot(
                         }
                         navController.popBackStack()
                     },
-                    onOpenAbout = { navController.navigate(HalaTujuRoutes.ABOUT) }
+                    onOpenAbout = { navController.navigate(HalaTujuRoutes.ABOUT) },
+                    onInjectTunnelBlackout = navigationViewModel::onInjectTunnelBlackout,
+                    onInjectOffRouteDetour = navigationViewModel::onInjectOffRouteDetour
                 )
             }
 
@@ -399,7 +439,45 @@ fun HalaTujuAppRoot(
                                 LocationPermissionHelper.createBatteryOptimizationSettingsIntent(context)
                             )
                         }
-                    }
+                    },
+                    onVoiceVolumeChange = settingsViewModel::setVoiceVolume,
+                    onOverspeedToleranceChange = settingsViewModel::setOverspeedToleranceKmh,
+                    onSimulationEnabledChange = settingsViewModel::setSimulationEnabled,
+                    onSimulationSpeedMultiplierChange = settingsViewModel::setSimulationSpeedMultiplier,
+                    onSimulationNoiseEnabledChange = settingsViewModel::setSimulationNoiseEnabled,
+                    onEndpointsChange = settingsViewModel::setEndpoints,
+                    gpxRecordingState = gpxRecordingState,
+                    gpxReplayState = gpxReplayState,
+                    onToggleGpxRecording = settingsViewModel::setGpxRecordingEnabled,
+                    onExportGpx = {
+                        scope.launch {
+                            val exportResult = withContext(Dispatchers.IO) {
+                                settingsViewModel.exportGpxFile()
+                            }
+                            exportResult.onSuccess { file ->
+                                val authority = "${context.packageName}.fileprovider"
+                                val shareUri = FileProvider.getUriForFile(context, authority, file)
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/gpx+xml"
+                                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                                    putExtra(Intent.EXTRA_SUBJECT, file.name)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                runCatching {
+                                    context.startActivity(Intent.createChooser(shareIntent, "Export GPX trace"))
+                                }
+                            }.onFailure { err ->
+                                snackbarHostState.showSnackbar(err.message ?: "Could not export GPX trace")
+                            }
+                        }
+                    },
+                    onClearGpxRecording = settingsViewModel::clearGpxRecording,
+                    onRequestImportGpx = {
+                        gpxOpenLauncher.launch(
+                            arrayOf("application/gpx+xml", "application/xml", "text/xml", "*/*")
+                        )
+                    },
+                    onStopGpxReplay = settingsViewModel::stopGpxReplay
                 )
             }
 
@@ -410,6 +488,19 @@ fun HalaTujuAppRoot(
             }
         }
     }
+}
+
+private fun queryDisplayName(context: Context, uri: Uri): String? {
+    return runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0) cursor.getString(idx) else null
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
 }
 
 @Composable

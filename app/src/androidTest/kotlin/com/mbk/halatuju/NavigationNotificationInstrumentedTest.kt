@@ -1,12 +1,12 @@
 package com.mbk.halatuju
 
-import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -27,10 +27,8 @@ import com.mbk.halatuju.core.model.RouteStep
 import com.mbk.halatuju.core.navigation.NavigationSessionManager
 import com.mbk.halatuju.core.navigation.NavigationStatus
 import com.mbk.halatuju.feature.navigation.NavigationNotificationFactory
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
-import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
+import dagger.hilt.android.testing.HiltAndroidRule
+import dagger.hilt.android.testing.HiltAndroidTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,51 +38,43 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import javax.inject.Inject
 
+@HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
 class NavigationNotificationInstrumentedTest {
 
-    @get:Rule
+    @get:Rule(order = 0)
+    val hiltRule = HiltAndroidRule(this)
+
+    @get:Rule(order = 1)
+    val permissionsRule = RuntimePermissionsRule()
+
+    @get:Rule(order = 2)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
-    @EntryPoint
-    @InstallIn(SingletonComponent::class)
-    interface TestNavEntryPoint {
-        fun sessionManager(): NavigationSessionManager
-    }
-
-    private lateinit var sessionManager: NavigationSessionManager
+    @Inject
+    lateinit var sessionManager: NavigationSessionManager
 
     @Before
     fun setUp() {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val targetContext = instrumentation.targetContext
-        val permissions = buildList {
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-        permissions.forEach { perm ->
-            instrumentation.uiAutomation.grantRuntimePermission(targetContext.packageName, perm)
-        }
-        sessionManager = EntryPointAccessors.fromApplication(
-            targetContext.applicationContext,
-            TestNavEntryPoint::class.java
-        ).sessionManager()
+        hiltRule.inject()
     }
 
     @After
     fun tearDown() {
-        sessionManager.endNavigation()
-        val manager = InstrumentationRegistry.getInstrumentation().targetContext
-            .getSystemService(NotificationManager::class.java)
-        manager.cancel(NavigationNotificationFactory.NOTIFICATION_ID)
+        if (::sessionManager.isInitialized) {
+            runCatching { sessionManager.endNavigation() }
+        }
+        runCatching {
+            val manager = InstrumentationRegistry.getInstrumentation().targetContext
+                .getSystemService(NotificationManager::class.java)
+            manager.cancel(NavigationNotificationFactory.NOTIFICATION_ID)
+        }
     }
 
     @Test
-    fun homeMapRendersAttributionAndForegroundServicePostsPlatformNotification() {
+    fun homeMapRendersAttributionSettingsAndForegroundServicePostsPlatformNotification() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val notificationManager = context.getSystemService(NotificationManager::class.java)
 
@@ -92,9 +82,13 @@ class NavigationNotificationInstrumentedTest {
         composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
         composeRule.onNodeWithTag("home_search_card").assertIsDisplayed()
 
-        // Open Settings and verify Permissions & Background reliability section is reachable
+        // Open Settings and verify M6 Permissions & M7 Simulation/Service Endpoints sections are reachable
         composeRule.onNodeWithTag("settings_button").performClick()
         composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_list").performScrollToNode(hasTestTag("settings_simulation_card"))
+        composeRule.onNodeWithTag("settings_simulation_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("settings_list").performScrollToNode(hasTestTag("settings_endpoints_card"))
+        composeRule.onNodeWithTag("settings_endpoints_card").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_list").performScrollToNode(hasText("Permissions & Background"))
         composeRule.onNodeWithText("Permissions & Background").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Back").performClick()

@@ -7,6 +7,7 @@ import android.graphics.Path
 import androidx.compose.ui.graphics.toArgb
 import com.mbk.halatuju.core.map.theme.HalaTujuPalette
 import com.mbk.halatuju.core.model.DebugOverlayData
+import com.mbk.halatuju.core.model.GeoMath
 import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.NavRoute
 import com.mbk.halatuju.core.model.Place
@@ -14,6 +15,7 @@ import com.mbk.halatuju.core.model.PuckRenderState
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
@@ -24,6 +26,9 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import org.maplibre.geojson.Polygon
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Installs and updates HalaTuju sources and layers on top of the active MapLibre [Style].
@@ -44,6 +49,7 @@ internal class MapLibreLayerManager {
         ensureSource(style, SOURCE_PINS)
         ensureSource(style, SOURCE_PUCK_ACCURACY)
         ensureSource(style, SOURCE_PUCK)
+        ensureSource(style, SOURCE_DEBUG_ACCURACY)
         ensureSource(style, SOURCE_DEBUG_POINTS)
 
         val insertBelowId = findLabelAnchorLayerId(style)
@@ -110,18 +116,20 @@ internal class MapLibreLayerManager {
             )
         }
 
-        // GPS accuracy halo
+        // True-metric GPS accuracy halo polygon fill + crisp outline
         addLayerIfMissing(style, null) {
-            CircleLayer(LAYER_PUCK_ACCURACY, SOURCE_PUCK_ACCURACY).withProperties(
-                PropertyFactory.circleRadius(18f),
-                PropertyFactory.circleColor(
-                    if (isDarkTheme) 0x3339D2C0 else 0x330E5A58
-                ),
-                PropertyFactory.circleStrokeWidth(1.5f),
-                PropertyFactory.circleStrokeColor(
+            FillLayer(LAYER_PUCK_ACCURACY, SOURCE_PUCK_ACCURACY).withProperties(
+                PropertyFactory.fillColor(
+                    if (isDarkTheme) 0x2939D2C0 else 0x240E5A58
+                )
+            )
+        }
+        addLayerIfMissing(style, null) {
+            LineLayer(LAYER_PUCK_ACCURACY_RING, SOURCE_PUCK_ACCURACY).withProperties(
+                PropertyFactory.lineColor(
                     if (isDarkTheme) 0x8839D2C0.toInt() else 0x880E5A58.toInt()
                 ),
-                PropertyFactory.circlePitchAlignment(Property.CIRCLE_PITCH_ALIGNMENT_MAP)
+                PropertyFactory.lineWidth(1.5f)
             )
         }
 
@@ -138,7 +146,13 @@ internal class MapLibreLayerManager {
             )
         }
 
-        // Developer debug overlay dots (raw=red, kalman=cyan, snapped=green)
+        // Developer debug raw-fix metric accuracy ring + comparison dots (raw=red, kalman=cyan, snapped=green)
+        addLayerIfMissing(style, null) {
+            LineLayer(LAYER_DEBUG_ACCURACY_RING, SOURCE_DEBUG_ACCURACY).withProperties(
+                PropertyFactory.lineColor("#AAFF5252"),
+                PropertyFactory.lineWidth(2f)
+            )
+        }
         addLayerIfMissing(style, null) {
             CircleLayer(LAYER_DEBUG_POINTS, SOURCE_DEBUG_POINTS).withProperties(
                 PropertyFactory.circleRadius(6f),
@@ -212,11 +226,12 @@ internal class MapLibreLayerManager {
             addNumberProperty("bearing", puck.bearingDegrees)
             addBooleanProperty("deadReckoning", puck.isDeadReckoning)
         }
-        val accFeature = Feature.fromGeometry(pt).apply {
-            addNumberProperty("accuracy", puck.accuracyMeters)
-        }
+        val accCircle = createCirclePolygonFeature(
+            center = puck.position,
+            radiusMeters = puck.accuracyMeters.toDouble().coerceIn(3.0, 250.0)
+        )
         setCollection(style, SOURCE_PUCK, FeatureCollection.fromFeature(puckFeature))
-        setCollection(style, SOURCE_PUCK_ACCURACY, FeatureCollection.fromFeature(accFeature))
+        setCollection(style, SOURCE_PUCK_ACCURACY, FeatureCollection.fromFeature(accCircle))
     }
 
     fun updateDebugOverlay(
@@ -226,8 +241,19 @@ internal class MapLibreLayerManager {
     ) {
         if (!enabled || debugData == null) {
             setCollection(style, SOURCE_DEBUG_POINTS, FeatureCollection.fromFeatures(emptyList()))
+            setCollection(style, SOURCE_DEBUG_ACCURACY, FeatureCollection.fromFeatures(emptyList()))
             return
         }
+        val rawCircleFeatures = debugData.rawFix?.let { fix ->
+            listOf(
+                createCirclePolygonFeature(
+                    center = fix.position,
+                    radiusMeters = fix.accuracyMeters.toDouble().coerceIn(3.0, 250.0)
+                )
+            )
+        } ?: emptyList()
+        setCollection(style, SOURCE_DEBUG_ACCURACY, FeatureCollection.fromFeatures(rawCircleFeatures))
+
         val features = buildList {
             debugData.rawFix?.position?.let { raw ->
                 add(Feature.fromGeometry(Point.fromLngLat(raw.longitude, raw.latitude)).apply {
@@ -246,6 +272,25 @@ internal class MapLibreLayerManager {
             }
         }
         setCollection(style, SOURCE_DEBUG_POINTS, FeatureCollection.fromFeatures(features))
+    }
+
+    private fun createCirclePolygonFeature(
+        center: LatLng,
+        radiusMeters: Double,
+        segments: Int = 32
+    ): Feature {
+        val ring = ArrayList<Point>(segments + 1)
+        for (i in 0 until segments) {
+            val angle = 2.0 * Math.PI * i / segments
+            val vertex = GeoMath.fromLocalEnMeters(
+                anchor = center,
+                eastMeters = sin(angle) * radiusMeters,
+                northMeters = cos(angle) * radiusMeters
+            )
+            ring += Point.fromLngLat(vertex.longitude, vertex.latitude)
+        }
+        ring += ring.first()
+        return Feature.fromGeometry(Polygon.fromLngLats(listOf(ring)))
     }
 
     private fun toLineFeature(points: List<LatLng>): Feature? {
@@ -365,6 +410,7 @@ internal class MapLibreLayerManager {
         const val SOURCE_PINS = "halatuju-pins-src"
         const val SOURCE_PUCK_ACCURACY = "halatuju-puck-acc-src"
         const val SOURCE_PUCK = "halatuju-puck-src"
+        const val SOURCE_DEBUG_ACCURACY = "halatuju-debug-acc-src"
         const val SOURCE_DEBUG_POINTS = "halatuju-debug-pts-src"
 
         const val LAYER_ALT_ROUTES = "halatuju-alt-routes-layer"
@@ -373,7 +419,9 @@ internal class MapLibreLayerManager {
         const val LAYER_ACTIVE_ROUTE = "halatuju-active-route-layer"
         const val LAYER_PINS = "halatuju-pins-layer"
         const val LAYER_PUCK_ACCURACY = "halatuju-puck-acc-layer"
+        const val LAYER_PUCK_ACCURACY_RING = "halatuju-puck-acc-ring-layer"
         const val LAYER_PUCK = "halatuju-puck-layer"
+        const val LAYER_DEBUG_ACCURACY_RING = "halatuju-debug-acc-ring-layer"
         const val LAYER_DEBUG_POINTS = "halatuju-debug-pts-layer"
 
         const val IMAGE_PUCK = "halatuju-puck-img"

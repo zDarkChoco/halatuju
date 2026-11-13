@@ -45,6 +45,8 @@ class LocationSourceCoordinator @Inject constructor(
 
     private val _overrideSource = MutableStateFlow<LocationSource?>(null)
     private val _useOptionalFused = MutableStateFlow(false)
+    private val _hasActiveOverride = MutableStateFlow(false)
+    val hasActiveOverride: StateFlow<Boolean> = _hasActiveOverride.asStateFlow()
 
     private val _latestFix = MutableStateFlow<LocationFix?>(null)
     val latestFix: StateFlow<LocationFix?> = _latestFix.asStateFlow()
@@ -54,6 +56,7 @@ class LocationSourceCoordinator @Inject constructor(
 
     fun setOverrideSource(source: LocationSource?) {
         _overrideSource.value = source
+        _hasActiveOverride.value = source != null
     }
 
     fun setUseOptionalFused(enabled: Boolean) {

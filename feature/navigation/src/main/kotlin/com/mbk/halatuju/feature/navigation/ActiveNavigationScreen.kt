@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -38,6 +39,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
@@ -58,6 +60,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,6 +76,7 @@ import com.mbk.halatuju.core.navigation.NavigationSessionState
 import com.mbk.halatuju.core.navigation.NavigationStatus
 import com.mbk.halatuju.core.navigation.OverspeedState
 import java.time.ZoneId
+import java.util.Locale
 
 @Composable
 fun ActiveNavigationScreen(
@@ -87,6 +91,8 @@ fun ActiveNavigationScreen(
     onEndNavigation: () -> Unit,
     onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier,
+    onInjectTunnelBlackout: () -> Unit = {},
+    onInjectOffRouteDetour: () -> Unit = {},
     clockZoneId: ZoneId = ZoneId.systemDefault()
 ) {
     val session = uiState.session
@@ -172,6 +178,18 @@ fun ActiveNavigationScreen(
                         )
                     }
                 }
+
+                if (uiState.settings.developerDebugOverlayEnabled) {
+                    DeveloperDebugOverlay(
+                        uiState = uiState,
+                        onInjectTunnelBlackout = onInjectTunnelBlackout,
+                        onInjectOffRouteDetour = onInjectOffRouteDetour,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 12.dp, end = 14.dp)
+                            .widthIn(max = 320.dp)
+                    )
+                }
             } else {
                 // Compact portrait layout
                 Column(
@@ -189,6 +207,13 @@ fun ActiveNavigationScreen(
                         onEndNavigation = onEndNavigation
                     )
                     StatusBadgesRow(session = session)
+                    if (uiState.settings.developerDebugOverlayEnabled) {
+                        DeveloperDebugOverlay(
+                            uiState = uiState,
+                            onInjectTunnelBlackout = onInjectTunnelBlackout,
+                            onInjectOffRouteDetour = onInjectOffRouteDetour
+                        )
+                    }
                 }
 
                 if (session.status == NavigationStatus.ACTIVE) {
@@ -858,3 +883,190 @@ private fun NavigationBottomBar(
         }
     }
 }
+
+@Composable
+private fun DeveloperDebugOverlay(
+    uiState: ActiveNavigationUiState,
+    onInjectTunnelBlackout: () -> Unit,
+    onInjectOffRouteDetour: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dbg = uiState.session.debugOverlayData
+    val rawPos = dbg.rawFix?.position
+    val kalmanPos = dbg.kalmanPosition
+    val snapPos = dbg.snappedPosition
+    val rawAcc = dbg.rawFix?.accuracyMeters?.toInt()
+    val rawProvider = dbg.rawFix?.provider?.name ?: "NONE"
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("nav_debug_overlay"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xD90E1618),
+            contentColor = Color(0xFFEAF4F2)
+        ),
+        border = BorderStroke(1.dp, Color(0x4439D2C0))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "DEV TELEMETRY · $rawProvider",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF39D2C0)
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DebugLegendDot(color = Color(0xFFFF5252), label = "Raw")
+                    DebugLegendDot(color = Color(0xFF00E5FF), label = "Kalman")
+                    DebugLegendDot(color = Color(0xFF00E676), label = "Snap")
+                }
+            }
+
+            if (uiState.gpxReplayState.isActive) {
+                Text(
+                    text = "GPX REPLAY: ${uiState.gpxReplayState.trackName ?: "trace"} (${uiState.gpxReplayState.pointCount} pts)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = HalaTujuPalette.AmberAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            val rawLine = if (rawPos != null) {
+                String.format(
+                    Locale.US,
+                    "Raw: %.5f, %.5f (±%dm)",
+                    rawPos.latitude,
+                    rawPos.longitude,
+                    rawAcc ?: 0
+                )
+            } else {
+                "Raw: —"
+            }
+            Text(
+                text = rawLine,
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = Color(0xFFFFCDD2),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            val filteredLine = String.format(
+                Locale.US,
+                "Kalman: %s  |  Snap: %s",
+                kalmanPos?.let { String.format(Locale.US, "%.5f,%.5f", it.latitude, it.longitude) } ?: "—",
+                snapPos?.let { String.format(Locale.US, "%.5f,%.5f", it.latitude, it.longitude) } ?: "—"
+            )
+            Text(
+                text = filteredLine,
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = Color(0xFFB2DFDB),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            val metricsLine = String.format(
+                Locale.US,
+                "XTE %.1fm · dHdg %.0f° · Off %d (%.1fs)%s · DR=%s · Z=%.1f · Out=%d",
+                dbg.crossTrackErrorMeters,
+                dbg.headingDeltaDegrees,
+                dbg.offRouteConsecutiveCount,
+                dbg.offRouteDurationSeconds,
+                if (dbg.isOffRoute) "[OFF]" else "",
+                if (dbg.isDeadReckoning) "ON" else "off",
+                dbg.targetZoom,
+                dbg.rejectedOutlierCount
+            )
+            Text(
+                text = metricsLine,
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = if (dbg.isOffRoute) HalaTujuPalette.AmberAccent else Color(0xFFE0F2F1),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (uiState.settings.simulationEnabled && uiState.session.status == NavigationStatus.ACTIVE) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = onInjectTunnelBlackout,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("debug_inject_tunnel_button"),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (uiState.simulationFaultStatus.isTunnelBlackoutActive) {
+                                "Tunnel active…"
+                            } else {
+                                "Tunnel 8s"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = onInjectOffRouteDetour,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("debug_inject_offroute_button"),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (uiState.simulationFaultStatus.isOffRouteDetourActive) {
+                                "Detour active…"
+                            } else {
+                                "Off-route"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugLegendDot(
+    color: Color,
+    label: String
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .background(color, CircleShape)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFEAF4F2)
+        )
+    }
+}
+

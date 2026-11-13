@@ -16,6 +16,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.lifecycle.Lifecycle
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.mbk.halatuju.core.location.GpxReplayState
+import com.mbk.halatuju.core.location.SimulatedFaultStatus
 import com.mbk.halatuju.core.map.OpenFreeMapTileSource
 import com.mbk.halatuju.core.map.theme.HalaTujuTheme
 import com.mbk.halatuju.core.model.AppSettings
@@ -295,9 +297,114 @@ class ActiveNavigationScreenshotTest {
         composeRule.onNodeWithTag("nav_recenter_button").assertIsDisplayed()
         composeRule.onNodeWithTag("rerouting_pill").assertIsDisplayed()
         composeRule.onNodeWithTag("gps_weak_pill").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_debug_overlay").assertIsDisplayed()
         composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
 
         composeRule.onRoot().captureRoboImage("../../docs/screenshots/m4_active_nav_dark.png")
+    }
+
+    @Test
+    fun m7DebugOverlayWithSimulationFaultControlsDark() {
+        val tileSource = OpenFreeMapTileSource(RuntimeEnvironment.getApplication())
+        val route = sampleRoute()
+        val puckPos = LatLng(3.0450, 101.6890)
+        val rawPos = LatLng(3.04525, 101.68938)
+        val kalmanPos = LatLng(3.04512, 101.68918)
+
+        val uiState = ActiveNavigationUiState(
+            session = NavigationSessionState(
+                status = NavigationStatus.ACTIVE,
+                route = route,
+                distanceAlongRouteMeters = 13_500.0,
+                remainingDistanceMeters = 40_700.0,
+                remainingDurationSeconds = 2_340.0,
+                estimatedArrivalEpochMs = 1_778_583_540_000L,
+                etaTrafficLabel = "estimated",
+                cameraMode = MapCameraMode.NAVIGATION_25D,
+                cameraState = MapCameraState(
+                    mode = MapCameraMode.NAVIGATION_25D,
+                    center = puckPos,
+                    zoom = 15.6,
+                    bearingDegrees = 185.0,
+                    tiltDegrees = 52.0
+                ),
+                puckState = PuckRenderState(
+                    position = puckPos,
+                    bearingDegrees = 185f,
+                    accuracyMeters = 9f
+                ),
+                banner = GuidanceBannerState(
+                    maneuverType = ManeuverType.TURN,
+                    maneuverModifier = ManeuverModifier.RIGHT,
+                    distanceToManeuverMeters = 420.0,
+                    primaryText = "Lebuhraya Maju (MEX)"
+                ),
+                overspeed = OverspeedState(
+                    currentSpeedKmh = 88,
+                    speedLimit = SegmentSpeedLimit(speedKmh = 90, isExplicitNone = false, isUnknown = false),
+                    isOverspeeding = false
+                ),
+                debugOverlayData = DebugOverlayData(
+                    rawFix = LocationFix(
+                        position = rawPos,
+                        accuracyMeters = 14f,
+                        speedMps = 24.5f,
+                        bearingDegrees = 184f,
+                        timestampMs = 2_000L,
+                        provider = LocationProviderKind.SIMULATED
+                    ),
+                    kalmanPosition = kalmanPos,
+                    snappedPosition = puckPos,
+                    crossTrackErrorMeters = 6.4,
+                    headingDeltaDegrees = 3.2,
+                    offRouteConsecutiveCount = 0,
+                    offRouteDurationSeconds = 0.0,
+                    isOffRoute = false,
+                    isDeadReckoning = false,
+                    targetZoom = 15.6,
+                    rejectedOutlierCount = 1
+                )
+            ),
+            settings = AppSettings(
+                themeMode = ThemeMode.DARK,
+                simulationEnabled = true,
+                simulationSpeedMultiplier = 2.0f,
+                developerDebugOverlayEnabled = true
+            ),
+            simulationFaultStatus = SimulatedFaultStatus(
+                isTunnelBlackoutActive = true,
+                isOffRouteDetourActive = false
+            ),
+            gpxReplayState = GpxReplayState(
+                isActive = true,
+                trackName = "kl_commute.gpx",
+                pointCount = 142
+            )
+        )
+
+        composeRule.setContent {
+            HalaTujuTheme(themeMode = ThemeMode.DARK) {
+                ActiveNavigationScreen(
+                    uiState = uiState,
+                    tileSource = tileSource,
+                    isDarkTheme = true,
+                    onUserPanMap = {},
+                    onToggleOverview = {},
+                    onRecenterClick = {},
+                    onToggleMute = {},
+                    onContinueToNextStop = {},
+                    onEndNavigation = {},
+                    onOpenAbout = {},
+                    clockZoneId = klZone
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("nav_debug_overlay").assertIsDisplayed()
+        composeRule.onNodeWithTag("debug_inject_tunnel_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("debug_inject_offroute_button").assertIsDisplayed()
+
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m7_debug_simulation_dark.png")
     }
 
     @Test

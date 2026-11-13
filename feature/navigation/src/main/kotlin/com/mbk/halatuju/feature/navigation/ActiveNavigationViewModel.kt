@@ -2,6 +2,10 @@ package com.mbk.halatuju.feature.navigation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mbk.halatuju.core.location.GpxReplayController
+import com.mbk.halatuju.core.location.GpxReplayState
+import com.mbk.halatuju.core.location.RouteSimulationController
+import com.mbk.halatuju.core.location.SimulatedFaultStatus
 import com.mbk.halatuju.core.map.MapRenderingState
 import com.mbk.halatuju.core.map.TileSource
 import com.mbk.halatuju.core.model.AppSettings
@@ -20,7 +24,9 @@ import javax.inject.Inject
 
 data class ActiveNavigationUiState(
     val session: NavigationSessionState = NavigationSessionState(),
-    val settings: AppSettings = AppSettings()
+    val settings: AppSettings = AppSettings(),
+    val simulationFaultStatus: SimulatedFaultStatus = SimulatedFaultStatus(),
+    val gpxReplayState: GpxReplayState = GpxReplayState()
 ) {
     val isNavigationActive: Boolean
         get() = session.status == NavigationStatus.ACTIVE || session.status == NavigationStatus.ARRIVED_STOP
@@ -50,16 +56,22 @@ data class ActiveNavigationUiState(
 class ActiveNavigationViewModel @Inject constructor(
     private val sessionManager: NavigationSessionManager,
     settingsStore: SettingsStore,
+    private val routeSimulationController: RouteSimulationController,
+    gpxReplayController: GpxReplayController,
     val tileSource: TileSource
 ) : ViewModel() {
 
     val uiState: StateFlow<ActiveNavigationUiState> = combine(
         sessionManager.state,
-        settingsStore.settings
-    ) { session, settings ->
+        settingsStore.settings,
+        routeSimulationController.faultStatus,
+        gpxReplayController.state
+    ) { session, settings, faults, replay ->
         ActiveNavigationUiState(
             session = session,
-            settings = settings
+            settings = settings,
+            simulationFaultStatus = faults,
+            gpxReplayState = replay
         )
     }.stateIn(
         scope = viewModelScope,
@@ -72,6 +84,7 @@ class ActiveNavigationViewModel @Inject constructor(
     }
 
     fun endNavigation() {
+        routeSimulationController.clearFaults()
         sessionManager.endNavigation()
     }
 
@@ -105,5 +118,13 @@ class ActiveNavigationViewModel @Inject constructor(
 
     fun syncForegroundServiceIfActive() {
         sessionManager.syncForegroundServiceIfActive()
+    }
+
+    fun onInjectTunnelBlackout() {
+        routeSimulationController.injectTunnelBlackout()
+    }
+
+    fun onInjectOffRouteDetour() {
+        routeSimulationController.injectOffRouteDetour()
     }
 }
