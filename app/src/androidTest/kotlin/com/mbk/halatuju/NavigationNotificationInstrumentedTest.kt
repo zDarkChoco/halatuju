@@ -7,11 +7,13 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.core.app.NotificationCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -93,6 +95,7 @@ class NavigationNotificationInstrumentedTest {
         // Open Settings and verify Permissions & Background reliability section is reachable
         composeRule.onNodeWithTag("settings_button").performClick()
         composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_list").performScrollToNode(hasText("Permissions & Background"))
         composeRule.onNodeWithText("Permissions & Background").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Back").performClick()
         composeRule.waitForIdle()
