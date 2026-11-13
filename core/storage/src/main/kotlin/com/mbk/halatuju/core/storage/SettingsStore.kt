@@ -2,14 +2,13 @@ package com.mbk.halatuju.core.storage
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.datastore.preferences.preferencesDataStore
 import com.mbk.halatuju.core.model.AppSettings
 import com.mbk.halatuju.core.model.RoutingAvoidances
 import com.mbk.halatuju.core.model.ServiceEndpoints
@@ -22,6 +21,10 @@ import kotlinx.coroutines.flow.map
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private val Context.halatujuSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "halatuju_settings"
+)
 
 interface SettingsStore {
     val settings: Flow<AppSettings>
@@ -46,9 +49,7 @@ class DataStoreSettingsStore(
 
     @Inject
     constructor(@ApplicationContext context: Context) : this(
-        PreferenceDataStoreFactory.create(
-            produceFile = { context.preferencesDataStoreFile("halatuju_settings") }
-        )
+        context.applicationContext.halatujuSettingsDataStore
     )
 
     override val settings: Flow<AppSettings> = dataStore.data

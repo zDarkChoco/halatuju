@@ -82,6 +82,16 @@ class SimulatedLocationSource(
         offRouteDetourUntilElapsedMs = elapsedClockMs() + durationMs.coerceIn(5_000L, 25_000L)
     }
 
+    fun clearOffRouteDetour() {
+        offRouteDetourUntilElapsedMs = 0L
+        faultStatusListener(
+            SimulatedFaultStatus(
+                isTunnelBlackoutActive = elapsedClockMs() < tunnelBlackoutUntilElapsedMs,
+                isOffRouteDetourActive = false
+            )
+        )
+    }
+
     fun clearInjectedFaults() {
         tunnelBlackoutUntilElapsedMs = 0L
         offRouteDetourUntilElapsedMs = 0L
@@ -106,18 +116,19 @@ class SimulatedLocationSource(
             val cfg = configProvider()
             val route = snapshot.route
 
-            val inTunnel = nowElapsedMs < tunnelBlackoutUntilElapsedMs
-            val inDetour = nowElapsedMs < offRouteDetourUntilElapsedMs
-            faultStatusListener(
-                SimulatedFaultStatus(
-                    isTunnelBlackoutActive = inTunnel,
-                    isOffRouteDetourActive = inDetour
-                )
-            )
-
             if (route != null && route.geometry.size >= 2 && !snapshot.isFinished) {
                 val routeStart = route.geometry.firstOrNull()
                 val routeEnd = route.geometry.lastOrNull()
+                val routeSwitched = trackedRouteId != null && (
+                    route.id != trackedRouteId ||
+                        routeStart != trackedRouteStart ||
+                        routeEnd != trackedRouteEnd ||
+                        route.legs.size != trackedLegsCount
+                    )
+                if (routeSwitched && offRouteDetourUntilElapsedMs > 0L) {
+                    // Reroute updated the active route; resume cleanly on the new polyline
+                    offRouteDetourUntilElapsedMs = 0L
+                }
                 if (route.id != trackedRouteId ||
                     routeStart != trackedRouteStart ||
                     routeEnd != trackedRouteEnd ||
@@ -129,6 +140,18 @@ class SimulatedLocationSource(
                     trackedLegsCount = route.legs.size
                     distanceAlongRoute = 0.0
                 }
+            }
+
+            val inTunnel = nowElapsedMs < tunnelBlackoutUntilElapsedMs
+            val inDetour = nowElapsedMs < offRouteDetourUntilElapsedMs
+            faultStatusListener(
+                SimulatedFaultStatus(
+                    isTunnelBlackoutActive = inTunnel,
+                    isOffRouteDetourActive = inDetour
+                )
+            )
+
+            if (route != null && route.geometry.size >= 2 && !snapshot.isFinished) {
 
                 val sampleBefore = sampleAlongRoute(route, distanceAlongRoute)
                 val baseSpeedMps = resolveTargetSpeedMps(route, sampleBefore.segmentIndex)
@@ -351,6 +374,10 @@ class RouteSimulationController @Inject constructor(
 
     fun injectOffRouteDetour(durationMs: Long = 15_000L, lateralOffsetMeters: Double = 80.0) {
         simulatedSource.injectOffRouteDetour(durationMs, lateralOffsetMeters)
+    }
+
+    fun clearOffRouteDetour() {
+        simulatedSource.clearOffRouteDetour()
     }
 
     fun clearFaults() {

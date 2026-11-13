@@ -51,7 +51,8 @@ class NavigationSessionManager internal constructor(
     private val clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
     private val epochMs: () -> Long = { System.currentTimeMillis() },
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
-    private val onRouteSnapshotChanged: (SimulatedRouteProgressSnapshot) -> Unit = {}
+    private val onRouteSnapshotChanged: (SimulatedRouteProgressSnapshot) -> Unit = {},
+    private val onRerouteApplied: () -> Unit = {}
 ) {
     @Inject
     constructor(
@@ -74,7 +75,8 @@ class NavigationSessionManager internal constructor(
         settingsStore = settingsStore,
         voiceGuidancePlayer = voiceGuidancePlayer,
         foregroundController = foregroundController,
-        onRouteSnapshotChanged = { snap -> routeSimulationController.updateRouteSnapshot(snap) }
+        onRouteSnapshotChanged = { snap -> routeSimulationController.updateRouteSnapshot(snap) },
+        onRerouteApplied = { routeSimulationController.clearOffRouteDetour() }
     )
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -334,6 +336,7 @@ class NavigationSessionManager internal constructor(
                     onSuccess = { newRoutes ->
                         val newRoute = newRoutes.firstOrNull()
                         if (newRoute != null && _state.value.status != NavigationStatus.IDLE) {
+                            onRerouteApplied()
                             publishState(
                                 engine.applyReroutedRoute(
                                     newRoute = newRoute,

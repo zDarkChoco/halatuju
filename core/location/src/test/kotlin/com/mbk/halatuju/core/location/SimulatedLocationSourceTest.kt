@@ -154,4 +154,46 @@ class SimulatedLocationSourceTest {
         val resumed = src.observeLocations(250L).take(2).toList()
         assertTrue(resumed[1].position.longitude > fixes[2].position.longitude)
     }
+
+    @Test
+    fun `rerouting to new route clears active off route detour cleanly`() = runBlocking {
+        val routeA = testRoute(id = "valhalla_0")
+        val rerouteStart = GeoMath.fromLocalEnMeters(KlDefaults.KLCC, eastMeters = 400.0, northMeters = -80.0)
+        val rerouteEnd = routeA.geometry.last()
+        val routeB = routeA.copy(
+            id = "valhalla_0",
+            geometry = listOf(rerouteStart, GeoMath.interpolateLatLng(rerouteStart, rerouteEnd, 0.5), rerouteEnd),
+            waypoints = listOf(Place("r0", "Reroute", "", rerouteStart), routeA.waypoints.last())
+        )
+        var currentRoute = routeA
+        var clockMs = 1_000L
+        var lastFault = SimulatedFaultStatus()
+        val src = SimulatedLocationSource(
+            routeSnapshotProvider = { SimulatedRouteProgressSnapshot(route = currentRoute) },
+            configProvider = {
+                SimulationRuntimeConfig(enabled = true, speedMultiplier = 1.0f, noiseEnabled = false)
+            },
+            tickIntervalMs = 20L,
+            epochClockMs = { clockMs },
+            elapsedClockMs = {
+                clockMs += 1_000L
+                clockMs
+            },
+            faultStatusListener = { lastFault = it }
+        )
+
+        src.injectOffRouteDetour(durationMs = 20_000L, lateralOffsetMeters = 80.0)
+        val emitted = mutableListOf<com.mbk.halatuju.core.model.LocationFix>()
+        src.observeLocations(250L).take(4).collect { fix ->
+            emitted += fix
+            if (emitted.size == 2) {
+                assertTrue(lastFault.isOffRouteDetourActive)
+                currentRoute = routeB
+            }
+        }
+        assertFalse(lastFault.isOffRouteDetourActive)
+        // Third fix is emitted immediately on routeB without further 80m detour offset
+        val (_, northDeltaFromB) = GeoMath.toLocalEnMeters(rerouteStart, emitted[2].position)
+        assertTrue("Expected post-reroute fix to lie on routeB, got northDelta=$northDeltaFromB", kotlin.math.abs(northDeltaFromB) < 5.0)
+    }
 }

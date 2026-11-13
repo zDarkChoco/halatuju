@@ -147,6 +147,7 @@ jobs:
           name: emulator-results-api-${{ matrix.api-level }}
           path: |
             app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
             ci-emulator-artifacts/
 
   release:

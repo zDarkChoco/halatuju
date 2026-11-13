@@ -50,7 +50,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -186,7 +185,7 @@ class OfflineE2ENavigationInstrumentedTest {
         val context = instrumentation.targetContext
         val device = UiDevice.getInstance(instrumentation)
         val notificationManager = context.getSystemService(NotificationManager::class.java)
-        val screenshotDir = context.getExternalFilesDir("ci_screenshots")?.apply { mkdirs() }
+        CiArtifactCapture.prepareDir(device)
 
         composeRule.waitForIdle()
         composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
@@ -209,7 +208,7 @@ class OfflineE2ENavigationInstrumentedTest {
                     .fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag("route_traffic_label").assertIsDisplayed()
-        screenshotDir?.let { device.takeScreenshot(File(it, "ci_03_e2e_route_preview.png")) }
+        CiArtifactCapture.captureScreenshot(device, "ci_03_e2e_route_preview.png")
 
         // 3. Add intermediate stop ("KL Sentral") and trigger automatic multi-leg reroute
         composeRule.onNodeWithTag("add_stop_button").performClick()
@@ -252,34 +251,41 @@ class OfflineE2ENavigationInstrumentedTest {
         if (Build.VERSION.SDK_INT >= 36) {
             assertTrue(NotificationCompat.isRequestPromotedOngoing(activeNotif!!.notification))
         }
-        screenshotDir?.let { device.takeScreenshot(File(it, "ci_04_e2e_active_nav.png")) }
+        CiArtifactCapture.captureScreenshot(device, "ci_04_e2e_active_nav.png")
 
         // 5. Wait for simulated arrival at intermediate Stop 1 and continue to Leg 2
         composeRule.waitUntil(timeoutMillis = 25_000L) {
             composeRule.onAllNodesWithTag("nav_stop_arrival_card").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("Arrived at stop 1").assertIsDisplayed()
-        screenshotDir?.let { device.takeScreenshot(File(it, "ci_05_e2e_stop_arrival.png")) }
+        CiArtifactCapture.captureScreenshot(device, "ci_05_e2e_stop_arrival.png")
         composeRule.onNodeWithTag("nav_continue_stop_button").performClick()
 
         composeRule.waitUntil(timeoutMillis = 8_000L) {
             sessionManager.state.value.status == NavigationStatus.ACTIVE &&
-                sessionManager.state.value.currentLegIndex == 1
+                sessionManager.state.value.currentLegIndex == 1 &&
+                composeRule.onAllNodesWithTag("debug_inject_offroute_button").fetchSemanticsNodes().isNotEmpty()
         }
 
         // 6. Trigger real off-route detour button on Debug Overlay -> wait for reroute call with heading
-        composeRule.onNodeWithTag("debug_inject_offroute_button").performScrollTo().performClick()
+        val offrouteButton = composeRule.onNodeWithTag("debug_inject_offroute_button")
+        runCatching { offrouteButton.performScrollTo() }
+        offrouteButton.performClick()
         composeRule.waitUntil(timeoutMillis = 22_000L) {
-            rerouteRequestCount.get() >= 1 && sawHeadingOnReroute.get()
+            rerouteRequestCount.get() >= 1 &&
+                sawHeadingOnReroute.get() &&
+                sessionManager.state.value.route?.legs?.size == 1 &&
+                !sessionManager.state.value.isRerouting
         }
-        screenshotDir?.let { device.takeScreenshot(File(it, "ci_06_e2e_post_reroute.png")) }
+        composeRule.waitForIdle()
+        CiArtifactCapture.captureScreenshot(device, "ci_06_e2e_post_reroute.png")
 
         // 7. Wait for arrival at final destination ("You have arrived") -> tap Done -> clean IDLE
         composeRule.waitUntil(timeoutMillis = 45_000L) {
             composeRule.onAllNodesWithTag("nav_destination_arrival_card").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("You have arrived").assertIsDisplayed()
-        screenshotDir?.let { device.takeScreenshot(File(it, "ci_07_e2e_dest_arrival.png")) }
+        CiArtifactCapture.captureScreenshot(device, "ci_07_e2e_dest_arrival.png")
         composeRule.onNodeWithTag("nav_done_button").performClick()
 
         val endedCleanly = waitUntil(timeoutMs = 8_000L) {
@@ -339,7 +345,7 @@ class OfflineE2ENavigationInstrumentedTest {
                     )
                 )
             }
-            if (q.contains("sentral") || q.contains("kl")) {
+            if (q.contains("sentral") || q == "kl") {
                 features.put(
                     photonFeature(
                         osmId = 7002L,

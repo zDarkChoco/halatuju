@@ -38,7 +38,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidTest
@@ -80,6 +79,8 @@ class NavigationNotificationInstrumentedTest {
         val context = instrumentation.targetContext
         val device = UiDevice.getInstance(instrumentation)
         val notificationManager = context.getSystemService(NotificationManager::class.java)
+
+        CiArtifactCapture.prepareDir(device)
 
         composeRule.waitForIdle()
         composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
@@ -148,17 +149,15 @@ class NavigationNotificationInstrumentedTest {
             assertEquals(1_000, progressMax)
         }
 
-        // Capture live app & notification shade screenshots before ending navigation
-        val screenshotDir = context.getExternalFilesDir("ci_screenshots")?.apply { mkdirs() }
-        if (screenshotDir != null) {
-            device.takeScreenshot(File(screenshotDir, "ci_01_notif_active_nav.png"))
-            runCatching {
-                device.openNotification()
-                Thread.sleep(700L)
-                device.takeScreenshot(File(screenshotDir, "ci_02_notif_shade.png"))
-                device.pressBack()
-                Thread.sleep(300L)
-            }
+        // Capture live app, non-redacted dumpsys, & notification shade screenshots before ending navigation
+        CiArtifactCapture.captureScreenshot(device, "ci_01_notif_active_nav.png")
+        CiArtifactCapture.captureNotificationDump(device, "dumpsys_active_nav.txt")
+        runCatching {
+            device.openNotification()
+            Thread.sleep(900L)
+            CiArtifactCapture.captureScreenshot(device, "ci_02_notif_shade.png")
+            CiArtifactCapture.collapseStatusBar(device)
+            Thread.sleep(400L)
         }
 
         // Trigger the exact PendingIntent attached to the notification's "End" action button
