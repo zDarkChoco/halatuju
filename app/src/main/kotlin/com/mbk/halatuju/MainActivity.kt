@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,16 +37,14 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -61,11 +60,19 @@ import androidx.navigation.compose.rememberNavController
 import com.mbk.halatuju.core.location.LocationPermissionHelper
 import com.mbk.halatuju.core.map.HalaTujuMapSurface
 import com.mbk.halatuju.core.map.MapRenderingState
-import com.mbk.halatuju.core.map.OpenFreeMapTileSource
 import com.mbk.halatuju.core.map.TileSource
 import com.mbk.halatuju.core.map.theme.HalaTujuTheme
+import com.mbk.halatuju.core.model.FavoriteKind
+import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.MapCameraMode
+import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.ThemeMode
+import com.mbk.halatuju.feature.search.DroppedPinCard
+import com.mbk.halatuju.feature.search.HomeSearchCard
+import com.mbk.halatuju.feature.search.RouteEndpoint
+import com.mbk.halatuju.feature.search.SearchField
+import com.mbk.halatuju.feature.search.SearchUiState
+import com.mbk.halatuju.feature.search.SearchViewModel
 import com.mbk.halatuju.feature.settings.AboutLicensesScreen
 import com.mbk.halatuju.feature.settings.SettingsScreen
 import com.mbk.halatuju.feature.settings.SettingsViewModel
@@ -107,7 +114,9 @@ fun HalaTujuAppRoot(
 ) {
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val settingsViewModel: SettingsViewModel = hiltViewModel()
+    val searchViewModel: SearchViewModel = hiltViewModel()
     val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
+    val searchState by searchViewModel.uiState.collectAsStateWithLifecycle()
 
     val isDark = when (settings.themeMode) {
         ThemeMode.FOLLOW_SYSTEM -> isSystemInDarkTheme()
@@ -136,6 +145,45 @@ fun HalaTujuAppRoot(
         mainViewModel.refreshPermissions()
     }
 
+    val selectedWaypoints = remember(
+        searchState.fromEndpoint,
+        searchState.intermediateStops,
+        searchState.toEndpoint,
+        uiState.latestFix
+    ) {
+        buildList {
+            when (val from = searchState.fromEndpoint) {
+                is RouteEndpoint.SelectedPlace -> add(from.place)
+                is RouteEndpoint.MyLocation -> {
+                    uiState.latestFix?.let { fix ->
+                        add(Place(id = "origin:me", name = "My location", subtitle = "", location = fix.position))
+                    }
+                }
+            }
+            addAll(searchState.intermediateStops)
+            when (val to = searchState.toEndpoint) {
+                is RouteEndpoint.SelectedPlace -> add(to.place)
+                is RouteEndpoint.MyLocation -> {
+                    uiState.latestFix?.let { fix ->
+                        add(Place(id = "dest:me", name = "My location", subtitle = "", location = fix.position))
+                    }
+                }
+                null -> Unit
+            }
+        }
+    }
+
+    val mapDroppedPin = remember(searchState.droppedPin) {
+        searchState.droppedPin?.let { pin ->
+            pin.resolvedPlace ?: Place(
+                id = "pin:pending",
+                name = "Pinned location",
+                subtitle = "",
+                location = pin.location
+            )
+        }
+    }
+
     HalaTujuTheme(themeMode = settings.themeMode) {
         val navController = rememberNavController()
         NavHost(
@@ -144,17 +192,38 @@ fun HalaTujuAppRoot(
         ) {
             composable(HalaTujuRoutes.HOME) {
                 HalaTujuHomeMapShell(
-                    mapState = mainViewModel.toMapRenderingState(uiState, isDarkTheme = isDark),
+                    mapState = mainViewModel.toMapRenderingState(
+                        state = uiState,
+                        isDarkTheme = isDark,
+                        waypoints = selectedWaypoints,
+                        droppedPin = mapDroppedPin
+                    ),
                     tileSource = mainViewModel.tileSource,
                     hasLocationPermission = uiState.permissionStatus.hasAnyLocation,
                     tiltPreviewEnabled = uiState.tiltPreviewEnabled,
+                    searchState = searchState,
                     onRequestLocationPermission = {
                         permissionLauncher.launch(LocationPermissionHelper.requiredRuntimePermissions())
                     },
                     onUserPanMap = mainViewModel::onUserPanMap,
+                    onMapLongClick = searchViewModel::onMapLongClick,
                     onRecenterClick = mainViewModel::onRecenterClick,
                     onOpenSettings = { navController.navigate(HalaTujuRoutes.SETTINGS) },
-                    onOpenAbout = { navController.navigate(HalaTujuRoutes.ABOUT) }
+                    onOpenAbout = { navController.navigate(HalaTujuRoutes.ABOUT) },
+                    onSearchFieldFocused = searchViewModel::onFieldFocused,
+                    onSearchQueryChanged = searchViewModel::onQueryChanged,
+                    onClearSearchField = searchViewModel::onClearFieldQuery,
+                    onSwapEndpoints = searchViewModel::onSwapEndpoints,
+                    onSearchPlaceClick = searchViewModel::onPlaceSelected,
+                    onUseMyLocationClick = searchViewModel::onUseMyLocationSelected,
+                    onFavoriteShortcutClick = searchViewModel::onFavoriteShortcutClick,
+                    onToggleSavePlace = searchViewModel::onToggleSavePlace,
+                    onClearRecents = searchViewModel::onClearRecents,
+                    onRetrySearch = searchViewModel::onRetrySearch,
+                    onDismissSearchFocus = searchViewModel::dismissSearchFocus,
+                    onApplyDroppedPinAs = searchViewModel::onApplyDroppedPinAs,
+                    onSaveDroppedPinFavorite = searchViewModel::onSaveDroppedPinFavorite,
+                    onDismissDroppedPin = searchViewModel::onDismissDroppedPin
                 )
             }
 
@@ -191,7 +260,23 @@ fun HalaTujuHomeMapShell(
     onRecenterClick: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenAbout: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    searchState: SearchUiState = SearchUiState(),
+    onMapLongClick: (LatLng) -> Unit = {},
+    onSearchFieldFocused: (SearchField) -> Unit = {},
+    onSearchQueryChanged: (SearchField, String) -> Unit = { _, _ -> },
+    onClearSearchField: (SearchField) -> Unit = {},
+    onSwapEndpoints: () -> Unit = {},
+    onSearchPlaceClick: (Place) -> Unit = {},
+    onUseMyLocationClick: () -> Unit = {},
+    onFavoriteShortcutClick: (FavoriteKind) -> Unit = {},
+    onToggleSavePlace: (Place) -> Unit = {},
+    onClearRecents: () -> Unit = {},
+    onRetrySearch: () -> Unit = {},
+    onDismissSearchFocus: () -> Unit = {},
+    onApplyDroppedPinAs: (SearchField) -> Unit = {},
+    onSaveDroppedPinFavorite: (FavoriteKind) -> Unit = {},
+    onDismissDroppedPin: () -> Unit = {}
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         HalaTujuMapSurface(
@@ -199,113 +284,164 @@ fun HalaTujuHomeMapShell(
             tileSource = tileSource,
             attributionPadding = PaddingValues(start = 12.dp, bottom = 36.dp),
             onUserPanMap = onUserPanMap,
+            onMapLongClick = onMapLongClick,
             onAttributionClick = onOpenAbout,
             modifier = Modifier
                 .fillMaxSize()
                 .testTag("home_map_surface")
         )
 
-        // Calm floating utility buttons (Settings + Recenter / 2.5D Toggle) inside safe drawing insets
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
-                .align(Alignment.TopEnd)
+                .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(top = 12.dp, end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalAlignment = Alignment.End
         ) {
-            FilledTonalIconButton(
-                onClick = onOpenSettings,
-                modifier = Modifier
-                    .size(48.dp)
-                    .testTag("settings_button")
-                    .semantics { contentDescription = "Open settings" },
-                shape = CircleShape,
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                )
-            ) {
-                Icon(imageVector = Icons.Default.Settings, contentDescription = null)
-            }
+            val isWide = maxWidth >= 600.dp
+            val maxListHeight = if (maxHeight < 520.dp) 180.dp else 320.dp
 
-            FilledTonalIconButton(
-                onClick = onRecenterClick,
+            HomeSearchCard(
+                state = searchState,
+                onFieldFocused = onSearchFieldFocused,
+                onQueryChanged = onSearchQueryChanged,
+                onClearField = onClearSearchField,
+                onSwapClick = onSwapEndpoints,
+                onPlaceClick = onSearchPlaceClick,
+                onUseMyLocationClick = onUseMyLocationClick,
+                onFavoriteShortcutClick = onFavoriteShortcutClick,
+                onToggleSavePlace = onToggleSavePlace,
+                onClearRecents = onClearRecents,
+                onRetrySearch = onRetrySearch,
+                onDismissFocus = onDismissSearchFocus,
+                maxListHeight = maxListHeight,
                 modifier = Modifier
-                    .size(48.dp)
-                    .testTag("recenter_button")
-                    .semantics {
-                        contentDescription = if (mapState.cameraState.mode == MapCameraMode.FREE_PAN) {
-                            "Recenter map on current location"
-                        } else {
-                            "Toggle 2.5D perspective tilt"
-                        }
-                    },
-                shape = CircleShape,
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = if (mapState.cameraState.mode == MapCameraMode.FREE_PAN || tiltPreviewEnabled) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
-                    },
-                    contentColor = if (mapState.cameraState.mode == MapCameraMode.FREE_PAN || tiltPreviewEnabled) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    }
-                )
-            ) {
-                Icon(
-                    imageVector = if (tiltPreviewEnabled) Icons.Default.Explore else Icons.Default.MyLocation,
-                    contentDescription = null
-                )
-            }
-        }
+                    .align(if (isWide) Alignment.TopStart else Alignment.TopCenter)
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+                    .widthIn(max = 420.dp)
+            )
 
-        if (!hasLocationPermission) {
-            Card(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 72.dp)
-                    .widthIn(max = 460.dp)
-                    .fillMaxWidth()
-                    .testTag("location_permission_card"),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-            ) {
-                Row(
+            // Calm floating utility buttons (Settings + Recenter / 2.5D Toggle) below the search card on portrait,
+            // or top-right on wide/landscape screens; hidden cleanly while search suggestions panel is open.
+            if (!searchState.isFocused) {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .align(Alignment.TopEnd)
+                        .padding(
+                            top = if (isWide) 12.dp else 132.dp,
+                            end = 14.dp
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.End
                 ) {
-                    Column(
+                    FilledTonalIconButton(
+                        onClick = onOpenSettings,
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(end = 12.dp)
-                    ) {
-                        Text(
-                            text = "Location access needed",
-                            style = MaterialTheme.typography.titleMedium
+                            .size(48.dp)
+                            .testTag("settings_button")
+                            .semantics { contentDescription = "Open settings" },
+                        shape = CircleShape,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                            contentColor = MaterialTheme.colorScheme.onSurface
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Uses device GPS/Network without Google services.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    ) {
+                        Icon(imageVector = Icons.Default.Settings, contentDescription = null)
+                    }
+
+                    FilledTonalIconButton(
+                        onClick = onRecenterClick,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("recenter_button")
+                            .semantics {
+                                contentDescription = if (mapState.cameraState.mode == MapCameraMode.FREE_PAN) {
+                                    "Recenter map on current location"
+                                } else {
+                                    "Toggle 2.5D perspective tilt"
+                                }
+                            },
+                        shape = CircleShape,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = if (mapState.cameraState.mode == MapCameraMode.FREE_PAN || tiltPreviewEnabled) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+                            },
+                            contentColor = if (mapState.cameraState.mode == MapCameraMode.FREE_PAN || tiltPreviewEnabled) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    ) {
+                        Icon(
+                            imageVector = if (tiltPreviewEnabled) Icons.Default.Explore else Icons.Default.MyLocation,
+                            contentDescription = null
                         )
                     }
-                    Button(
-                        onClick = onRequestLocationPermission,
-                        modifier = Modifier.testTag("grant_location_button")
-                    ) {
-                        Text("Allow")
+                }
+            }
+
+            if (!searchState.isFocused) {
+                val pinState = searchState.droppedPin
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 16.dp, end = 16.dp, bottom = 72.dp)
+                        .widthIn(max = 460.dp)
+                        .fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (pinState != null) {
+                        DroppedPinCard(
+                            pinState = pinState,
+                            onSetDestination = { onApplyDroppedPinAs(SearchField.TO) },
+                            onSetOrigin = { onApplyDroppedPinAs(SearchField.FROM) },
+                            onSaveFavorite = onSaveDroppedPinFavorite,
+                            onDismiss = onDismissDroppedPin
+                        )
+                    } else if (!hasLocationPermission) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("location_permission_card"),
+                            shape = RoundedCornerShape(18.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 12.dp)
+                                ) {
+                                    Text(
+                                        text = "Location access needed",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Uses device GPS/Network without Google services.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Button(
+                                    onClick = onRequestLocationPermission,
+                                    modifier = Modifier.testTag("grant_location_button")
+                                ) {
+                                    Text("Allow")
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -56,7 +56,9 @@ class MainShellScreenshotTest {
         }
         composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
         composeRule.onNodeWithTag("settings_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("home_search_card").assertIsDisplayed()
         composeRule.onRoot().captureRoboImage("../docs/screenshots/m1_map_light.png")
+        composeRule.onRoot().captureRoboImage("../docs/screenshots/m2_search_collapsed_light.png")
     }
 
     @Test

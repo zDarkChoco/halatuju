@@ -1,0 +1,239 @@
+package com.mbk.halatuju.feature.search
+
+import android.app.Application
+import com.mbk.halatuju.core.geocoding.Geocoder
+import com.mbk.halatuju.core.location.FusedLocationAdapter
+import com.mbk.halatuju.core.location.LocationSourceCoordinator
+import com.mbk.halatuju.core.location.PlatformLocationSource
+import com.mbk.halatuju.core.model.AppSettings
+import com.mbk.halatuju.core.model.FavoriteKind
+import com.mbk.halatuju.core.model.KlDefaults
+import com.mbk.halatuju.core.model.LatLng
+import com.mbk.halatuju.core.model.LocationFix
+import com.mbk.halatuju.core.model.LocationProviderKind
+import com.mbk.halatuju.core.model.Place
+import com.mbk.halatuju.core.model.RoutingAvoidances
+import com.mbk.halatuju.core.model.ServiceEndpoints
+import com.mbk.halatuju.core.model.ThemeMode
+import com.mbk.halatuju.core.model.UnitSystem
+import com.mbk.halatuju.core.storage.PlaceRepository
+import com.mbk.halatuju.core.storage.SettingsStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36], application = Application::class)
+class SearchViewModelTest {
+
+    private val testDispatcher = StandardTestDispatcher()
+
+    private lateinit var fakeGeocoder: FakeGeocoder
+    private lateinit var fakePlaces: InMemoryPlaceRepository
+    private lateinit var fakeSettings: InMemorySettingsStore
+    private lateinit var coordinator: LocationSourceCoordinator
+    private lateinit var viewModel: SearchViewModel
+
+    private val klcc = Place(
+        id = "photon:1",
+        name = "KLCC",
+        subtitle = "Jalan Ampang, Kuala Lumpur",
+        location = KlDefaults.KLCC
+    )
+
+    private val klia = Place(
+        id = "photon:2",
+        name = "KLIA Terminal 1",
+        subtitle = "Sepang, Selangor",
+        location = KlDefaults.KLIA
+    )
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(testDispatcher)
+        fakeGeocoder = FakeGeocoder(
+            searchResults = listOf(klcc, klia),
+            reversePlace = Place("nominatim:42", "Lorong Kuda", "KLCC, Kuala Lumpur", KlDefaults.KLCC)
+        )
+        fakePlaces = InMemoryPlaceRepository()
+        fakeSettings = InMemorySettingsStore()
+        val app = RuntimeEnvironment.getApplication()
+        coordinator = LocationSourceCoordinator(
+            platformLocationSource = PlatformLocationSource(app),
+            fusedLocationAdapter = object : FusedLocationAdapter {
+                override val isAvailableOnDevice: Boolean = false
+                override val providerKind: LocationProviderKind = LocationProviderKind.FUSED
+                override fun observeLocations(minIntervalMs: Long): Flow<LocationFix> = emptyFlow()
+            }
+        )
+        viewModel = SearchViewModel(fakeGeocoder, fakePlaces, fakeSettings, coordinator)
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun `debounced search runs after 300ms, stores recent on selection, and swap reverses endpoints`() = runTest(testDispatcher) {
+        val collector = backgroundScope.launch { viewModel.uiState.collect {} }
+        runCurrent()
+
+        assertEquals(RouteEndpoint.MyLocation, viewModel.uiState.value.fromEndpoint)
+        assertNull(viewModel.uiState.value.toEndpoint)
+        assertFalse(viewModel.uiState.value.isFocused)
+
+        viewModel.onFieldFocused(SearchField.TO)
+        runCurrent()
+        assertTrue(viewModel.uiState.value.isFocused)
+
+        viewModel.onQueryChanged(SearchField.TO, "KL")
+        advanceTimeBy(150L)
+        runCurrent()
+        assertEquals(0, fakeGeocoder.searchCalls.size)
+
+        advanceTimeBy(200L)
+        runCurrent()
+        assertEquals(listOf("KL"), fakeGeocoder.searchCalls)
+        assertEquals(2, viewModel.uiState.value.suggestions.size)
+
+        viewModel.onPlaceSelected(klia)
+        runCurrent()
+
+        assertFalse(viewModel.uiState.value.isFocused)
+        assertEquals(RouteEndpoint.SelectedPlace(klia), viewModel.uiState.value.toEndpoint)
+        assertEquals("KLIA Terminal 1", viewModel.uiState.value.toQueryText)
+        assertEquals(listOf(klia.id), fakePlaces.recordedRecents.map { it.id })
+
+        viewModel.onSwapEndpoints()
+        runCurrent()
+
+        assertEquals(RouteEndpoint.SelectedPlace(klia), viewModel.uiState.value.fromEndpoint)
+        assertEquals(RouteEndpoint.MyLocation, viewModel.uiState.value.toEndpoint)
+        assertEquals("KLIA Terminal 1", viewModel.uiState.value.fromQueryText)
+        assertEquals("My location", viewModel.uiState.value.toQueryText)
+
+        collector.cancel()
+    }
+
+    @Test
+    fun `long press map reverse geocodes dropped pin and assigns HOME favorite shortcut cleanly`() = runTest(testDispatcher) {
+        val collector = backgroundScope.launch { viewModel.uiState.collect {} }
+        runCurrent()
+
+        viewModel.onMapLongClick(KlDefaults.KLCC)
+        runCurrent()
+
+        val pin = viewModel.uiState.value.droppedPin
+        assertEquals("Lorong Kuda", pin?.resolvedPlace?.name)
+
+        viewModel.onApplyDroppedPinAs(SearchField.TO)
+        runCurrent()
+        assertNull(viewModel.uiState.value.droppedPin)
+        assertEquals("Lorong Kuda", viewModel.uiState.value.toQueryText)
+
+        // Assigning HOME on first click puts Search into assignment mode, then saves chosen place as HOME
+        viewModel.onFavoriteShortcutClick(FavoriteKind.HOME)
+        runCurrent()
+        assertEquals(FavoriteKind.HOME, viewModel.uiState.value.pendingFavoriteAssignment)
+
+        viewModel.onPlaceSelected(klcc)
+        runCurrent()
+        assertEquals("KLCC", viewModel.uiState.value.homeFavorite()?.name)
+        assertNull(viewModel.uiState.value.pendingFavoriteAssignment)
+
+        collector.cancel()
+    }
+
+    private class FakeGeocoder(
+        private val searchResults: List<Place>,
+        private val reversePlace: Place?
+    ) : Geocoder {
+        val searchCalls = ArrayList<String>()
+
+        override suspend fun search(
+            query: String,
+            bias: LatLng?,
+            limit: Int,
+            baseUrlOverride: String?
+        ): Result<List<Place>> {
+            searchCalls += query
+            return Result.success(searchResults.take(limit))
+        }
+
+        override suspend fun reverse(
+            location: LatLng,
+            baseUrlOverride: String?
+        ): Result<Place?> = Result.success(reversePlace?.copy(location = location))
+    }
+
+    private class InMemoryPlaceRepository : PlaceRepository {
+        private val recents = MutableStateFlow<List<Place>>(emptyList())
+        private val favorites = MutableStateFlow<List<Place>>(emptyList())
+        val recordedRecents = ArrayList<Place>()
+
+        override fun observeRecents(limit: Int): Flow<List<Place>> = recents.map { it.take(limit) }
+        override fun observeFavorites(): Flow<List<Place>> = favorites
+
+        override suspend fun recordRecent(place: Place, usedAtEpochMs: Long) {
+            recordedRecents += place
+            recents.value = (listOf(place.copy(lastUsedEpochMs = usedAtEpochMs)) + recents.value)
+                .distinctBy { it.id }
+        }
+
+        override suspend fun saveFavorite(place: Place, kind: FavoriteKind, updatedAtEpochMs: Long) {
+            val saved = place.copy(favoriteKind = kind, lastUsedEpochMs = updatedAtEpochMs)
+            favorites.value = (favorites.value.filterNot {
+                (kind != FavoriteKind.NONE && it.favoriteKind == kind) || it.id == place.id
+            } + saved)
+        }
+
+        override suspend fun removeFavorite(kindOrId: String) {
+            favorites.value = favorites.value.filterNot {
+                it.id == kindOrId || it.favoriteKind.name == kindOrId
+            }
+        }
+
+        override suspend fun clearRecents() {
+            recents.value = emptyList()
+        }
+    }
+
+    private class InMemorySettingsStore : SettingsStore {
+        private val state = MutableStateFlow(AppSettings())
+        override val settings: Flow<AppSettings> = state
+        override suspend fun updateThemeMode(mode: ThemeMode) {}
+        override suspend fun updateUnitSystem(units: UnitSystem) {}
+        override suspend fun updateVoiceEnabled(enabled: Boolean) {}
+        override suspend fun updateVoiceVolume(volume: Float) {}
+        override suspend fun updateOverspeedToleranceKmh(toleranceKmh: Int) {}
+        override suspend fun updateAvoidances(avoidances: RoutingAvoidances) {}
+        override suspend fun updateEndpoints(endpoints: ServiceEndpoints) {}
+        override suspend fun updateSimulationEnabled(enabled: Boolean) {}
+        override suspend fun updateSimulationSpeedMultiplier(multiplier: Float) {}
+        override suspend fun updateSimulationNoiseEnabled(enabled: Boolean) {}
+        override suspend fun updateDeveloperDebugOverlayEnabled(enabled: Boolean) {}
+    }
+}

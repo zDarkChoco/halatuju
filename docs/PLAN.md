@@ -17,11 +17,11 @@
   - [x] Build About / Open-Source Licenses (ODbL) screen and basic Settings theme switcher (Light / Dark / System)
   - [x] Add unit & Roborazzi screenshot tests for M1 Light & Dark map shell
 
-- [ ] **M2 — Search (Photon), Nominatim Reverse Geocoding, From/To UI, Recents & Favorites**
-  - [ ] Implement `Geocoder` interface, `PhotonGeocoder` (search-as-you-type with KL location bias, 300 ms debounce, cache, `User-Agent`), `NominatimGeocoder` (reverse geocode, 1 req/s rate limit, cache)
-  - [ ] Implement Room entities/DAOs (`RecentPlace`, `FavoritePlace` Home/Work) and DataStore `SettingsStore`
-  - [ ] Build Home floating search card (`From` defaulting to `"My location"`, `Where to?`, swap button, recents & Home/Work favorites shown only when focused)
-  - [ ] Add unit tests with recorded KL Photon & Nominatim JSON fixtures + screenshot tests
+- [x] **M2 — Search (Photon), Nominatim Reverse Geocoding, From/To UI, Recents & Favorites**
+  - [x] Implement `Geocoder` interface, `PhotonGeocoder` (search-as-you-type with KL location bias, 300 ms debounce, cache, `User-Agent`), `NominatimGeocoder` (reverse geocode, 1 req/s rate limit, cache)
+  - [x] Implement Room entities/DAOs (`RecentPlace`, `FavoritePlace` Home/Work) and DataStore `SettingsStore`
+  - [x] Build Home floating search card (`From` defaulting to `"My location"`, `Where to?`, swap button, recents & Home/Work favorites shown only when focused)
+  - [x] Add unit tests with recorded KL Photon & Nominatim JSON fixtures + screenshot tests
 
 - [ ] **M3 — Routing, Preview, Alternatives, Add/Reorder Stops, Traffic Model**
   - [ ] Implement `Router` interface + `ValhallaRouter` (OSRM format, `bannerInstructions`, `voiceInstructions`, `intersections[].lanes`, `annotation.maxspeed`, `alternates`, `costing_options.auto` avoid tolls/highways/ferries, `date_time`, response cache)

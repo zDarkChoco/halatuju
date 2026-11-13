@@ -111,7 +111,9 @@ class MainViewModel @Inject constructor(
 
     fun toMapRenderingState(
         state: MainUiState,
-        isDarkTheme: Boolean
+        isDarkTheme: Boolean,
+        waypoints: List<com.mbk.halatuju.core.model.Place> = emptyList(),
+        droppedPin: com.mbk.halatuju.core.model.Place? = null
     ): MapRenderingState {
         val fix = state.latestFix
         val center = fix?.position ?: KlDefaults.KLCC
@@ -133,6 +135,8 @@ class MainViewModel @Inject constructor(
                 tiltDegrees = if (state.tiltPreviewEnabled) 48.0 else 0.0
             ),
             puckState = puck,
+            waypoints = waypoints,
+            droppedPin = droppedPin,
             debugOverlayEnabled = state.settings.developerDebugOverlayEnabled
         )
     }
