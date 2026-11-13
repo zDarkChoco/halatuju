@@ -45,9 +45,9 @@
   - [x] Add unit tests (lane parser, maxspeed parser, TTS stage scheduler, overspeed hysteresis) + screenshot tests
 
 - [ ] **M6 — Foreground Service + Android 16 Live Update Notification**
-  - [ ] Implement `NavigationForegroundService` (`foregroundServiceType="location"`)
-  - [ ] Implement Android 16 (`API 36+`) `ProgressStyle` + `setRequestPromotedOngoing(true)` + `POST_PROMOTED_NOTIFICATIONS` + `setShortCriticalText` Live Update notification, plus API `< 36` standard ongoing notification fallback
-  - [ ] Handle runtime permissions (`ACCESS_FINE_LOCATION`, `POST_NOTIFICATIONS`, optional battery optimization hint) cleanly
+  - [x] Implement `NavigationForegroundService` (`foregroundServiceType="location"`)
+  - [x] Implement Android 16 (`API 36+`) `ProgressStyle` + `setRequestPromotedOngoing(true)` + `POST_PROMOTED_NOTIFICATIONS` + `setShortCriticalText` Live Update notification, plus API `< 36` standard ongoing notification fallback
+  - [x] Handle runtime permissions (`ACCESS_FINE_LOCATION`, `POST_NOTIFICATIONS`, optional battery optimization hint) cleanly
   - [ ] Verify notification on both Android 16 (API 36) and Android 12–14 (API 34) emulators in CI + unit tests
 
 - [ ] **M7 — Simulation, GPX Replay/Record, Debug Overlay**

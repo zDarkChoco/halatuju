@@ -44,6 +44,7 @@ class NavigationSessionManager internal constructor(
     private val trafficProvider: TrafficProvider,
     private val settingsStore: SettingsStore,
     private val voiceGuidancePlayer: VoiceGuidancePlayer = NoOpVoiceGuidancePlayer,
+    private val foregroundController: NavigationForegroundController = NoOpNavigationForegroundController,
     private val clockMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
     private val epochMs: () -> Long = { System.currentTimeMillis() },
     dispatcher: CoroutineDispatcher = Dispatchers.Default
@@ -54,14 +55,16 @@ class NavigationSessionManager internal constructor(
         router: Router,
         trafficProvider: TrafficProvider,
         settingsStore: SettingsStore,
-        voiceGuidancePlayer: VoiceGuidancePlayer
+        voiceGuidancePlayer: VoiceGuidancePlayer,
+        foregroundController: NavigationForegroundController
     ) : this(
         locationSource = locationSourceCoordinator,
         onFixObserved = { fix -> locationSourceCoordinator.recordLatestFix(fix) },
         router = router,
         trafficProvider = trafficProvider,
         settingsStore = settingsStore,
-        voiceGuidancePlayer = voiceGuidancePlayer
+        voiceGuidancePlayer = voiceGuidancePlayer,
+        foregroundController = foregroundController
     )
 
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -81,6 +84,7 @@ class NavigationSessionManager internal constructor(
         sessionJob?.cancel()
         rerouteJob?.cancel()
         voiceGuidancePlayer.warmup()
+        foregroundController.onNavigationStarted()
         sessionJob = scope.launch {
             val settings = settingsStore.settings.first()
             isMuted = !settings.voiceEnabled
@@ -102,6 +106,7 @@ class NavigationSessionManager internal constructor(
                 _state.value = init.state
                 init
             }
+            foregroundController.onNavigationStateChanged(initResult.state, settings.unitSystem)
             dispatchAudioFeedback(
                 previousChimeId = prevChimeId,
                 nextState = initResult.state,
@@ -135,6 +140,7 @@ class NavigationSessionManager internal constructor(
                         }
                     }
                     if (drResult != null) {
+                        foregroundController.onNavigationStateChanged(drResult.state, curSettings.unitSystem)
                         dispatchAudioFeedback(
                             previousChimeId = drPrevChime,
                             nextState = drResult.state,
@@ -167,6 +173,7 @@ class NavigationSessionManager internal constructor(
                         )
                     }
                     _state.value = stepRes.state
+                    foregroundController.onNavigationStateChanged(stepRes.state, curSettings.unitSystem)
                     dispatchAudioFeedback(
                         previousChimeId = fixPrevChime,
                         nextState = stepRes.state,
@@ -175,7 +182,9 @@ class NavigationSessionManager internal constructor(
                         volume = voiceVolume
                     )
 
-                    if (stepRes.shouldRequestReroute && stepRes.rerouteOrigin != null) {
+                    if (stepRes.state.status == NavigationStatus.ARRIVED_DESTINATION) {
+                        deadReckonLoop.cancel()
+                    } else if (stepRes.shouldRequestReroute && stepRes.rerouteOrigin != null) {
                         triggerReroute(
                             origin = stepRes.rerouteOrigin,
                             headingDegrees = stepRes.rerouteBearingDegrees,
@@ -195,10 +204,18 @@ class NavigationSessionManager internal constructor(
         sessionJob = null
         rerouteJob = null
         voiceGuidancePlayer.stopSpeaking()
+        foregroundController.onNavigationStopped()
         scope.launch {
             engineMutex.withLock {
                 _state.value = engine.stop()
             }
+        }
+    }
+
+    fun syncForegroundServiceIfActive() {
+        val status = _state.value.status
+        if (status == NavigationStatus.ACTIVE || status == NavigationStatus.ARRIVED_STOP) {
+            foregroundController.onNavigationStarted()
         }
     }
 

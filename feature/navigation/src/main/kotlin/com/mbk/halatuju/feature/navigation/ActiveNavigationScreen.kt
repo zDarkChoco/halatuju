@@ -528,8 +528,8 @@ private fun ManeuverBannerCard(
 private fun SpeedCluster(
     overspeed: OverspeedState,
     unitSystem: UnitSystem,
-    isDarkTheme: Boolean = isSystemInDarkTheme(),
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isDarkTheme: Boolean = isSystemInDarkTheme()
 ) {
     val speedVal = NavigationFormatters.formatSpeedValue(overspeed.currentSpeedKmh, unitSystem)
     val unitLabel = NavigationFormatters.speedUnitLabel(unitSystem)

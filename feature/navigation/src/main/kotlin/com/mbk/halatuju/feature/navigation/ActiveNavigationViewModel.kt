@@ -102,4 +102,8 @@ class ActiveNavigationViewModel @Inject constructor(
     fun onToggleMute() {
         sessionManager.toggleMute()
     }
+
+    fun syncForegroundServiceIfActive() {
+        sessionManager.syncForegroundServiceIfActive()
+    }
 }

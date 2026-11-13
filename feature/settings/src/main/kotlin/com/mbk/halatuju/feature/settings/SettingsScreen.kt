@@ -51,7 +51,10 @@ fun SettingsScreen(
     onDeveloperDebugOverlayChange: (Boolean) -> Unit,
     onOpenAboutLicenses: () -> Unit,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    permissionStatus: com.mbk.halatuju.core.location.PermissionStatusSnapshot? = null,
+    onOpenNotificationSettings: () -> Unit = {},
+    onOpenBatteryOptimizationSettings: () -> Unit = {}
 ) {
     Scaffold(
         modifier = modifier
@@ -164,6 +167,36 @@ fun SettingsScreen(
                 }
             }
 
+            if (permissionStatus != null) {
+                item {
+                    SettingsSectionCard(title = "Permissions & Background") {
+                        SettingsActionRow(
+                            title = "Notifications & Live Updates",
+                            subtitle = when {
+                                !permissionStatus.hasNotificationPermission ->
+                                    "Off — turn-by-turn progress notification blocked"
+                                android.os.Build.VERSION.SDK_INT >= 36 && !permissionStatus.canPostPromotedNotifications ->
+                                    "Allowed — enable Live Updates promotion in system settings"
+                                android.os.Build.VERSION.SDK_INT >= 36 ->
+                                    "Active — Android 16 Live Updates enabled"
+                                else ->
+                                    "Active — ongoing notification enabled"
+                            },
+                            onClick = onOpenNotificationSettings
+                        )
+                        SettingsActionRow(
+                            title = "Battery optimization",
+                            subtitle = if (permissionStatus.isIgnoringBatteryOptimizations) {
+                                "Unrestricted — reliable when screen is off"
+                            } else {
+                                "Restricted — allow unrestricted background guidance if turns lag"
+                            },
+                            onClick = onOpenBatteryOptimizationSettings
+                        )
+                    }
+                }
+            }
+
             item {
                 SettingsSectionCard(title = "Developer") {
                     SettingsSwitchRow(
@@ -263,5 +296,38 @@ private fun SettingsSwitchRow(
             )
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null
+        )
     }
 }

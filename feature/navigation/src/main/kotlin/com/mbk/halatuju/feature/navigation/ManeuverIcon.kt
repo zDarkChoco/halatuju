@@ -30,9 +30,9 @@ import kotlin.math.sin
 fun ManeuverIcon(
     maneuverType: ManeuverType,
     maneuverModifier: ManeuverModifier,
+    modifier: Modifier = Modifier,
     tint: Color = Color.White,
-    secondaryTint: Color = tint.copy(alpha = 0.36f),
-    modifier: Modifier = Modifier.size(36.dp)
+    secondaryTint: Color = tint.copy(alpha = 0.36f)
 ) {
     Canvas(modifier = modifier) {
         val s = size.minDimension

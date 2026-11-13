@@ -1,5 +1,6 @@
 package com.mbk.halatuju
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -42,13 +43,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -73,8 +80,10 @@ import com.mbk.halatuju.core.model.MapCameraMode
 import com.mbk.halatuju.core.model.NavRoute
 import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.ThemeMode
+import com.mbk.halatuju.core.navigation.NavigationStatus
 import com.mbk.halatuju.feature.navigation.ActiveNavigationScreen
 import com.mbk.halatuju.feature.navigation.ActiveNavigationViewModel
+import com.mbk.halatuju.feature.navigation.NavigationNotificationFactory
 import com.mbk.halatuju.feature.search.DroppedPinCard
 import com.mbk.halatuju.feature.search.HomeSearchCard
 import com.mbk.halatuju.feature.search.RouteEndpoint
@@ -96,11 +105,17 @@ private object HalaTujuRoutes {
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    private val openNavigationSignal = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (intent?.getBooleanExtra(NavigationNotificationFactory.EXTRA_OPEN_ACTIVE_NAVIGATION, false) == true) {
+            openNavigationSignal.intValue += 1
+        }
         setContent {
             HalaTujuAppRoot(
+                openNavigationSignal = openNavigationSignal.intValue,
                 onSystemBarThemeUpdate = { isDark ->
                     val style = if (isDark) {
                         SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
@@ -115,13 +130,23 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(NavigationNotificationFactory.EXTRA_OPEN_ACTIVE_NAVIGATION, false)) {
+            openNavigationSignal.intValue += 1
+        }
+    }
 }
 
 @Composable
 fun HalaTujuAppRoot(
+    openNavigationSignal: Int = 0,
     onSystemBarThemeUpdate: (Boolean) -> Unit = {},
     mainViewModel: MainViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val settingsViewModel: SettingsViewModel = hiltViewModel()
     val searchViewModel: SearchViewModel = hiltViewModel()
@@ -130,6 +155,11 @@ fun HalaTujuAppRoot(
     val searchState by searchViewModel.uiState.collectAsStateWithLifecycle()
     val navState by navigationViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    var dismissedNotificationHint by rememberSaveable { mutableStateOf(false) }
+    var dismissedBatteryHint by rememberSaveable { mutableStateOf(false) }
+    var requestedNotificationOnStart by rememberSaveable { mutableStateOf(false) }
+    var sawActiveNavigationInSession by rememberSaveable { mutableStateOf(false) }
 
     val isDark = when (settings.themeMode) {
         ThemeMode.FOLLOW_SYSTEM -> isSystemInDarkTheme()
@@ -165,6 +195,7 @@ fun HalaTujuAppRoot(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) {
         mainViewModel.refreshPermissions()
+        navigationViewModel.syncForegroundServiceIfActive()
     }
 
     val selectedWaypoints = remember(
@@ -208,11 +239,40 @@ fun HalaTujuAppRoot(
 
     HalaTujuTheme(themeMode = settings.themeMode) {
         val navController = rememberNavController()
+
+        LaunchedEffect(openNavigationSignal, navState.isNavigationActive) {
+            if (openNavigationSignal > 0 && navState.isNavigationActive) {
+                navController.navigate(HalaTujuRoutes.NAVIGATION) {
+                    launchSingleTop = true
+                }
+            }
+        }
+
+        LaunchedEffect(navState.session.status) {
+            val status = navState.session.status
+            if (status != NavigationStatus.IDLE) {
+                sawActiveNavigationInSession = true
+            } else if (sawActiveNavigationInSession) {
+                sawActiveNavigationInSession = false
+                if (navController.currentDestination?.route == HalaTujuRoutes.NAVIGATION) {
+                    navController.popBackStack()
+                }
+            }
+        }
+
         NavHost(
             navController = navController,
             startDestination = HalaTujuRoutes.HOME
         ) {
             composable(HalaTujuRoutes.HOME) {
+                val showNotifHint = uiState.permissionStatus.hasAnyLocation &&
+                    !uiState.permissionStatus.hasNotificationPermission &&
+                    !dismissedNotificationHint
+                val showBatteryHint = uiState.permissionStatus.hasAnyLocation &&
+                    uiState.permissionStatus.hasNotificationPermission &&
+                    !uiState.permissionStatus.isIgnoringBatteryOptimizations &&
+                    !dismissedBatteryHint
+
                 HalaTujuHomeMapShell(
                     mapState = mainViewModel.toMapRenderingState(
                         state = uiState,
@@ -228,9 +288,26 @@ fun HalaTujuAppRoot(
                     tiltPreviewEnabled = uiState.tiltPreviewEnabled,
                     searchState = searchState,
                     snackbarHostState = snackbarHostState,
+                    showNotificationPermissionHint = showNotifHint,
+                    showBatteryOptimizationHint = showBatteryHint,
                     onRequestLocationPermission = {
                         permissionLauncher.launch(LocationPermissionHelper.requiredRuntimePermissions())
                     },
+                    onRequestNotificationPermission = {
+                        val notifPerms = LocationPermissionHelper.requiredNotificationPermissions()
+                        if (notifPerms.isNotEmpty()) {
+                            permissionLauncher.launch(notifPerms)
+                        }
+                    },
+                    onDismissNotificationHint = { dismissedNotificationHint = true },
+                    onOpenBatterySettings = {
+                        runCatching {
+                            context.startActivity(
+                                LocationPermissionHelper.createBatteryOptimizationSettingsIntent(context)
+                            )
+                        }
+                    },
+                    onDismissBatteryHint = { dismissedBatteryHint = true },
                     onUserPanMap = mainViewModel::onUserPanMap,
                     onMapLongClick = searchViewModel::onMapLongClick,
                     onRecenterClick = mainViewModel::onRecenterClick,
@@ -262,6 +339,14 @@ fun HalaTujuAppRoot(
                         navController.navigate(HalaTujuRoutes.NAVIGATION) {
                             launchSingleTop = true
                         }
+                        val notifPerms = LocationPermissionHelper.requiredNotificationPermissions()
+                        if (notifPerms.isNotEmpty() &&
+                            !uiState.permissionStatus.hasNotificationPermission &&
+                            !requestedNotificationOnStart
+                        ) {
+                            requestedNotificationOnStart = true
+                            permissionLauncher.launch(notifPerms)
+                        }
                     }
                 )
             }
@@ -278,7 +363,7 @@ fun HalaTujuAppRoot(
                     onContinueToNextStop = navigationViewModel::onContinueToNextStop,
                     onEndNavigation = {
                         val wasFinalArrival =
-                            navState.session.status == com.mbk.halatuju.core.navigation.NavigationStatus.ARRIVED_DESTINATION
+                            navState.session.status == NavigationStatus.ARRIVED_DESTINATION
                         navigationViewModel.endNavigation()
                         if (wasFinalArrival) {
                             searchViewModel.onClearRoute()
@@ -298,7 +383,23 @@ fun HalaTujuAppRoot(
                     onAvoidancesChange = settingsViewModel::setAvoidances,
                     onDeveloperDebugOverlayChange = settingsViewModel::setDeveloperDebugOverlayEnabled,
                     onOpenAboutLicenses = { navController.navigate(HalaTujuRoutes.ABOUT) },
-                    onBack = { navController.popBackStack() }
+                    onBack = { navController.popBackStack() },
+                    permissionStatus = uiState.permissionStatus,
+                    onOpenNotificationSettings = {
+                        val intent = if (!uiState.permissionStatus.hasNotificationPermission) {
+                            LocationPermissionHelper.createAppNotificationSettingsIntent(context)
+                        } else {
+                            LocationPermissionHelper.createPromotedNotificationSettingsIntent(context)
+                        }
+                        runCatching { context.startActivity(intent) }
+                    },
+                    onOpenBatteryOptimizationSettings = {
+                        runCatching {
+                            context.startActivity(
+                                LocationPermissionHelper.createBatteryOptimizationSettingsIntent(context)
+                            )
+                        }
+                    }
                 )
             }
 
@@ -325,6 +426,12 @@ fun HalaTujuHomeMapShell(
     modifier: Modifier = Modifier,
     searchState: SearchUiState = SearchUiState(),
     snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+    showNotificationPermissionHint: Boolean = false,
+    showBatteryOptimizationHint: Boolean = false,
+    onRequestNotificationPermission: () -> Unit = {},
+    onDismissNotificationHint: () -> Unit = {},
+    onOpenBatterySettings: () -> Unit = {},
+    onDismissBatteryHint: () -> Unit = {},
     onMapLongClick: (LatLng) -> Unit = {},
     onSearchFieldFocused: (SearchField) -> Unit = {},
     onSearchQueryChanged: (SearchField, String) -> Unit = { _, _ -> },
@@ -586,6 +693,26 @@ fun HalaTujuHomeMapShell(
                                 }
                             }
                         }
+                    } else if (showNotificationPermissionHint) {
+                        HomePermissionHintCard(
+                            tag = "notification_permission_card",
+                            title = "Turn-by-turn notifications",
+                            subtitle = "Enable notifications for Live Updates on lock screen & status bar.",
+                            actionLabel = "Allow",
+                            actionTag = "grant_notification_button",
+                            onAction = onRequestNotificationPermission,
+                            onDismiss = onDismissNotificationHint
+                        )
+                    } else if (showBatteryOptimizationHint) {
+                        HomePermissionHintCard(
+                            tag = "battery_optimization_card",
+                            title = "Keep guidance reliable",
+                            subtitle = "Set battery to Unrestricted if background turns lag when screen is off.",
+                            actionLabel = "Battery",
+                            actionTag = "open_battery_settings_button",
+                            onAction = onOpenBatterySettings,
+                            onDismiss = onDismissBatteryHint
+                        )
                     }
                 }
             }
@@ -596,6 +723,58 @@ fun HalaTujuHomeMapShell(
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 16.dp)
             )
+        }
+    }
+}
+
+@Composable
+private fun HomePermissionHintCard(
+    tag: String,
+    title: String,
+    subtitle: String,
+    actionLabel: String,
+    actionTag: String,
+    onAction: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(tag),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("Not now")
+                }
+                Button(
+                    onClick = onAction,
+                    modifier = Modifier.testTag(actionTag)
+                ) {
+                    Text(actionLabel)
+                }
+            }
         }
     }
 }

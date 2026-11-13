@@ -32,7 +32,8 @@ data class PermissionStatusSnapshot(
     val hasAnyLocation: Boolean,
     val hasNotificationPermission: Boolean,
     val isLocationEnabledOnDevice: Boolean,
-    val isIgnoringBatteryOptimizations: Boolean
+    val isIgnoringBatteryOptimizations: Boolean,
+    val canPostPromotedNotifications: Boolean = false
 )
 
 object LocationPermissionHelper {
@@ -82,7 +83,8 @@ object LocationPermissionHelper {
         hasAnyLocation = hasAnyLocationPermission(context),
         hasNotificationPermission = hasNotificationPermission(context),
         isLocationEnabledOnDevice = isLocationEnabledOnDevice(context),
-        isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations(context)
+        isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations(context),
+        canPostPromotedNotifications = canPostPromotedNotifications(context)
     )
 
     fun requiredRuntimePermissions(): Array<String> {
@@ -95,9 +97,42 @@ object LocationPermissionHelper {
         }.toTypedArray()
     }
 
+    fun requiredNotificationPermissions(): Array<String> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            emptyArray()
+        }
+    }
+
+    fun canPostPromotedNotifications(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return false
+        return runCatching {
+            androidx.core.app.NotificationManagerCompat.from(context).canPostPromotedNotifications()
+        }.getOrDefault(false)
+    }
+
     fun createBatteryOptimizationSettingsIntent(context: Context): Intent {
         return Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    fun createAppNotificationSettingsIntent(context: Context): Intent {
+        return Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+
+    fun createPromotedNotificationSettingsIntent(context: Context): Intent {
+        return if (Build.VERSION.SDK_INT >= 36) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        } else {
+            createAppNotificationSettingsIntent(context)
         }
     }
 

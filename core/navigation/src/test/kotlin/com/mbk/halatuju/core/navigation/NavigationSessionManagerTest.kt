@@ -56,6 +56,7 @@ class NavigationSessionManagerTest {
             )
         )
         val voiceRecorder = RecordingVoicePlayer()
+        val foregroundRecorder = RecordingForegroundController()
         var clockNowMs = 1_000L
         var epochNowMs = 10_000_000L
 
@@ -66,6 +67,7 @@ class NavigationSessionManagerTest {
             trafficProvider = FlatTrafficProvider,
             settingsStore = settingsStore,
             voiceGuidancePlayer = voiceRecorder,
+            foregroundController = foregroundRecorder,
             clockMs = { clockNowMs },
             epochMs = { epochNowMs },
             dispatcher = dispatcher
@@ -75,6 +77,8 @@ class NavigationSessionManagerTest {
         manager.startNavigation(route)
         runCurrent()
 
+        assertEquals(1, foregroundRecorder.startedCount)
+        assertTrue(foregroundRecorder.observedStates.isNotEmpty())
         assertTrue(voiceRecorder.warmedUp)
         assertEquals(1, voiceRecorder.spokenCues.size)
         assertEquals(VoiceStage.DEPART, voiceRecorder.spokenCues.first().first.stage)
@@ -140,6 +144,7 @@ class NavigationSessionManagerTest {
         manager.endNavigation()
         runCurrent()
         assertEquals(NavigationStatus.IDLE, manager.state.value.status)
+        assertEquals(1, foregroundRecorder.stoppedCount)
     }
 
     private fun sampleCorridorRoute(speedLimitKmh: Int): NavRoute {
@@ -261,5 +266,23 @@ class NavigationSessionManagerTest {
             traveledExpectedSeconds: Double,
             departureTimeEpochMs: Long
         ) = TrafficEstimate(baseRemainingSeconds, 1.0, false, "estimated")
+    }
+
+    private class RecordingForegroundController : NavigationForegroundController {
+        var startedCount = 0
+        var stoppedCount = 0
+        val observedStates = mutableListOf<NavigationSessionState>()
+
+        override fun onNavigationStarted() {
+            startedCount += 1
+        }
+
+        override fun onNavigationStateChanged(state: NavigationSessionState, unitSystem: UnitSystem) {
+            observedStates.add(state)
+        }
+
+        override fun onNavigationStopped() {
+            stoppedCount += 1
+        }
     }
 }
