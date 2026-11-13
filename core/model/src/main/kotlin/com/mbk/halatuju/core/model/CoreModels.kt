@@ -2,6 +2,11 @@ package com.mbk.halatuju.core.model
 
 import kotlinx.serialization.Serializable
 
+object AppInfo {
+    const val VERSION_NAME = "0.1.0"
+    const val USER_AGENT = "HalaTuju/0.1.0 (Android; +https://github.com/zDarkChoco/halatuju)"
+}
+
 /**
  * Default Kuala Lumpur (KLCC / Petronas Twin Towers) anchor used when no GPS fix is yet available.
  */
@@ -17,8 +22,8 @@ data class LatLng(
     val longitude: Double
 ) {
     init {
-        require(latitude in -90.0..90.0) { "Invalid latitude: $latitude" }
-        require(longitude in -180.0..180.0) { "Invalid longitude: $longitude" }
+        require(latitude.isFinite() && latitude in -90.0..90.0) { "Invalid latitude: $latitude" }
+        require(longitude.isFinite() && longitude in -180.0..180.0) { "Invalid longitude: $longitude" }
     }
 }
 

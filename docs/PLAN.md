@@ -8,14 +8,14 @@
   - [x] Initialize Gradle Wrapper, `gradle/libs.versions.toml`, `settings.gradle.kts`, and modular structure (`:app`, `:core:model`, `:core:storage`, `:core:location`, `:core:map`, `:core:routing`, `:core:geocoding`, `:core:navigation`, `:core:voice`, `:feature:search`, `:feature:navigation`, `:feature:settings`)
   - [x] Configure Hilt, Compose BOM, Material 3 (dynamic color off, HalaTuju light & dark palette), Room, DataStore, OkHttp, `kotlinx.serialization`, Roborazzi
   - [x] Configure `.github/workflows/android.yml` (push/PR: build, lint, unit tests, screenshot tests, debug APK artifact; tag `v*`: release APK + GitHub Release with debug-signing fallback)
-  - [ ] Push initial commit to GitHub and verify M0 CI green
+  - [x] Push initial commit to GitHub and verify M0 CI green
 
-- [ ] **M1 — Map, Light/Dark Theme, Location Puck, Attribution**
-  - [ ] Implement `TileSource` + `OpenFreeMapTileSource` (Liberty light + custom `halatuju_dark.json` with 3D `fill-extrusion` buildings + configurable tile URL)
-  - [ ] Implement `LocationSource` + `PlatformLocationSource` (`LocationManager` GPS+NETWORK) + runtime permission flow
-  - [ ] Render MapLibre Native Android (`android-sdk-opengl`) inside `:core:map` with 3D building extrusion, 60 fps interpolated puck, and permanent `"© OpenStreetMap contributors"` attribution
-  - [ ] Build About / Open-Source Licenses (ODbL) screen and basic Settings theme switcher (Light / Dark / System)
-  - [ ] Add unit & Roborazzi screenshot tests for M1 Light & Dark map shell
+- [x] **M1 — Map, Light/Dark Theme, Location Puck, Attribution**
+  - [x] Implement `TileSource` + `OpenFreeMapTileSource` (Liberty light + custom `halatuju_dark.json` with 3D `fill-extrusion` buildings + configurable tile URL)
+  - [x] Implement `LocationSource` + `PlatformLocationSource` (`LocationManager` GPS+NETWORK) + runtime permission flow
+  - [x] Render MapLibre Native Android (`android-sdk-opengl`) inside `:core:map` with 3D building extrusion, 60 fps interpolated puck, and permanent `"© OpenStreetMap contributors"` attribution
+  - [x] Build About / Open-Source Licenses (ODbL) screen and basic Settings theme switcher (Light / Dark / System)
+  - [x] Add unit & Roborazzi screenshot tests for M1 Light & Dark map shell
 
 - [ ] **M2 — Search (Photon), Nominatim Reverse Geocoding, From/To UI, Recents & Favorites**
   - [ ] Implement `Geocoder` interface, `PhotonGeocoder` (search-as-you-type with KL location bias, 300 ms debounce, cache, `User-Agent`), `NominatimGeocoder` (reverse geocode, 1 req/s rate limit, cache)

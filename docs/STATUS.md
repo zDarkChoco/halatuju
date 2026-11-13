@@ -20,8 +20,12 @@
   - Verified live responses saved in `core/geocoding/src/test/resources/fixtures/` (`photon_klcc.json`, `nominatim_reverse_klcc.json`).
 
 ## Milestone Progress
-- **M0 (Repo, Modules, CI Green, Empty App Installs):** Local verification **PASSED** (`./gradlew recordRoborazziDebug verifyRoborazziDebug testDebugUnitTest lintDebug assembleDebug assembleRelease`; 0 lint errors; `app-debug.apk` 61 MB, `app-release.apk` 42 MB R8-shrunk; screenshots [`m0_shell_light.png`](screenshots/m0_shell_light.png) & [`m0_shell_dark.png`](screenshots/m0_shell_dark.png) visually inspected). Pushing initial `main` commit to verify GitHub Actions CI.
-- **M1–M8:** Pending.
+- **M0 (Repo, Modules, CI Green, Empty App Installs):** Local & CI verification **PASSED** (`./gradlew recordRoborazziDebug verifyRoborazziDebug testDebugUnitTest lintDebug assembleDebug assembleRelease`; GitHub Actions run `43405426753` green in 7m30s; screenshots [`m0_shell_light.png`](screenshots/m0_shell_light.png) & [`m0_shell_dark.png`](screenshots/m0_shell_dark.png)).
+- **M1 (MapLibre 2.5D Surface, Light/Dark Themes, LocationManager GPS+Net, Puck Interpolation, Settings & ODbL About):** **PASSED**
+  - Implemented `:core:location` (`LocationSource`, `LocationArbitrator`, `PlatformLocationSource` without GMS runtime dependency, `LocationPermissionHelper`, `NoOpFusedLocationAdapter`), `:core:storage` (`DataStoreSettingsStore`, Room `HalaTujuDatabase` & `RoomPlaceRepository`), `:core:map` (`OpenFreeMapTileSource` + custom `halatuju_dark.json` with 3D `fill-extrusion` buildings, `HalaTujuMapSurface` with MapLibre OpenGL + `withFrameNanos` 60 fps puck interpolation + permanent `"© OpenStreetMap contributors"` pill), `:feature:settings` (`SettingsScreen`, `AboutLicensesScreen`, `SettingsViewModel`), and `:app` shell navigation & edge-to-edge permission flow.
+  - Caught & fixed dark-mode translucent card `LocalContentColor` black-text contrast regression via visual inspection of `m1_map_dark.png`, plus added bottom clearance above the OSM attribution chip.
+  - Verified local `./gradlew recordRoborazziDebug`, `testDebugUnitTest`, `verifyRoborazziDebug`, `lintDebug` (0 errors), `assembleDebug` (`app-debug.apk` 61 MB), and `assembleRelease` (R8 minified); visually inspected [`m1_map_light.png`](screenshots/m1_map_light.png), [`m1_map_dark.png`](screenshots/m1_map_dark.png), [`m1_settings_light.png`](screenshots/m1_settings_light.png), and [`m1_about_dark.png`](screenshots/m1_about_dark.png).
+- **M2–M8:** In progress / pending (starting M2 Geocoding & Search UI next).
 
 ## Known Open-Data & Platform Limitations
 - **Live Traffic:** No free global live traffic speed feed exists in open data. ETA uses Valhalla base costing (`date_time` when supported) + KL weekday peak congestion model (`docs/TRAFFIC.md`, explicitly labeled `"estimated"`) + live observed/expected pace adaptation during active trips.
