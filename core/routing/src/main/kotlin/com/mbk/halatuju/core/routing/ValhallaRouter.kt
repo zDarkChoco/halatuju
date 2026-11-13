@@ -246,7 +246,7 @@ class ValhallaRouter internal constructor(
                             ssmlAnnouncement = vi.ssmlAnnouncement
                         )
                     }
-                    val intersections = parseIntersections(stepDto.intersections)
+                    val intersections = parseIntersections(stepDto.intersections, legStartGeomIdx)
                     val roadTitle = stepDto.name.ifBlank {
                         banners.firstOrNull()?.primaryText ?: stepDto.maneuver.instruction
                     }
@@ -367,7 +367,8 @@ class ValhallaRouter internal constructor(
     }
 
     private fun parseIntersections(
-        dtoIntersections: List<IntersectionDto>
+        dtoIntersections: List<IntersectionDto>,
+        legStartGeomIdx: Int
     ): List<IntersectionLanes> {
         return dtoIntersections.mapNotNull { ix ->
             val rawLanes = ix.lanes
@@ -382,7 +383,7 @@ class ValhallaRouter internal constructor(
             else IntersectionLanes(
                 location = loc,
                 lanes = lanes,
-                geometryIndex = ix.geometryIndex
+                geometryIndex = ix.geometryIndex?.let { legStartGeomIdx + it }
             )
         }
     }

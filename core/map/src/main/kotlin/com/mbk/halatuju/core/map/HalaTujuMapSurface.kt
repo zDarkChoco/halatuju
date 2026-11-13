@@ -145,6 +145,7 @@ fun HalaTujuMapSurface(
         if (!useNativeMap) {
             FallbackPreviewMapCanvas(
                 state = state.copy(puckState = animatedPuck ?: state.puckState),
+                leftPanelInsetPx = leftPanelInsetPx,
                 modifier = Modifier.fillMaxSize()
             )
         } else {
@@ -343,9 +344,9 @@ fun HalaTujuMapSurface(
                     MapCameraMode.NAVIGATION_25D -> {
                         val target = animatedPuck?.position ?: cam.center
                         val heading = animatedPuck?.bearingDegrees?.toDouble() ?: cam.bearingDegrees
-                        // Place target puck cleanly inside the lower third of the visible map canvas
-                        val topBiasPadding = heightPx * 0.34
-                        val bottomMarginPadding = heightPx * 0.14
+                        // Place target puck cleanly inside the lower third (~68% y) of the visible map canvas
+                        val topBiasPadding = heightPx * 0.48
+                        val bottomMarginPadding = heightPx * 0.12
                         val clampedTilt = cam.tiltDegrees.coerceIn(45.0, 60.0)
                         val nextPos = CameraPosition.Builder()
                             .target(org.maplibre.android.geometry.LatLng(target.latitude, target.longitude))
@@ -401,6 +402,7 @@ fun HalaTujuMapSurface(
 @Composable
 private fun FallbackPreviewMapCanvas(
     state: MapRenderingState,
+    leftPanelInsetPx: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val bgColor = if (state.isDarkTheme) Color(0xFF0E1318) else Color(0xFFEFF3F3)
@@ -420,6 +422,8 @@ private fun FallbackPreviewMapCanvas(
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
+            val safeInsetX = leftPanelInsetPx.toFloat().coerceIn(0f, w * 0.6f)
+            val anchorX = safeInsetX + (w - safeInsetX) * 0.5f
 
             // Park and water polygons (evocative KLCC / Klang river layout)
             drawRect(color = parkColor, topLeft = Offset(w * 0.56f, h * 0.28f), size = Size(w * 0.34f, h * 0.24f))
@@ -448,45 +452,63 @@ private fun FallbackPreviewMapCanvas(
             }
             drawLine(roadHighway, Offset(0f, h * 0.78f), Offset(w, h * 0.32f), strokeWidth = 18f)
 
-            // Active + alternative route overlays if present in preview state
+            val isOverview = state.cameraState.mode == MapCameraMode.OVERVIEW
+            val anchorY = when (state.cameraState.mode) {
+                MapCameraMode.NAVIGATION_25D -> h * 0.67f
+                MapCameraMode.OVERVIEW -> if (safeInsetX > 0f) h * 0.5f else h * 0.43f
+                else -> h * 0.5f
+            }
+
             val active = state.activeRoute
-            if (active != null && active.geometry.size >= 2) {
-                val allPoints = buildList {
+            val allPoints = if (active != null && active.geometry.size >= 2) {
+                buildList {
                     addAll(active.geometry)
                     state.alternativeRoutes.forEach { addAll(it.geometry) }
                 }
-                val isOverview = state.cameraState.mode == MapCameraMode.OVERVIEW
+            } else {
+                emptyList()
+            }
+
+            val refCenter = if (isOverview && allPoints.size >= 2) {
                 val minLat = allPoints.minOf { it.latitude }
                 val maxLat = allPoints.maxOf { it.latitude }
                 val minLon = allPoints.minOf { it.longitude }
                 val maxLon = allPoints.maxOf { it.longitude }
-                val refCenter = if (isOverview) {
-                    LatLng((minLat + maxLat) * 0.5, (minLon + maxLon) * 0.5)
-                } else {
-                    state.puckState?.position ?: state.cameraState.center
-                }
-                val metersPerPx = if (isOverview) {
-                    val (spanE, spanN) = GeoMath.toLocalEnMeters(LatLng(minLat, minLon), LatLng(maxLat, maxLon))
-                    val usableW = (w * 0.72f).coerceAtLeast(100f)
-                    val usableH = (h * 0.38f).coerceAtLeast(100f)
-                    maxOf(spanE.toFloat() / usableW, spanN.toFloat() / usableH, 6.0f).toDouble()
-                } else {
-                    6.0
-                }
-                val anchorY = when (state.cameraState.mode) {
-                    MapCameraMode.NAVIGATION_25D -> h * 0.67f
-                    MapCameraMode.OVERVIEW -> h * 0.43f
-                    else -> h * 0.5f
-                }
+                LatLng((minLat + maxLat) * 0.5, (minLon + maxLon) * 0.5)
+            } else {
+                state.puckState?.position ?: state.cameraState.center
+            }
 
-                fun project(pt: LatLng): Offset {
-                    val (e, n) = GeoMath.toLocalEnMeters(refCenter, pt)
-                    return Offset(
-                        x = w * 0.5f + (e / metersPerPx).toFloat(),
-                        y = anchorY - (n / metersPerPx).toFloat()
-                    )
-                }
+            val metersPerPx = if (isOverview && allPoints.size >= 2) {
+                val minLat = allPoints.minOf { it.latitude }
+                val maxLat = allPoints.maxOf { it.latitude }
+                val minLon = allPoints.minOf { it.longitude }
+                val maxLon = allPoints.maxOf { it.longitude }
+                val (spanE, spanN) = GeoMath.toLocalEnMeters(LatLng(minLat, minLon), LatLng(maxLat, maxLon))
+                val usableW = ((w - safeInsetX) * 0.72f).coerceAtLeast(100f)
+                val usableH = (h * (if (safeInsetX > 0f) 0.62f else 0.38f)).coerceAtLeast(100f)
+                maxOf(spanE.toFloat() / usableW, spanN.toFloat() / usableH, 6.0f).toDouble()
+            } else {
+                4.5
+            }
 
+            val mapBearingDeg = if (isOverview) 0.0 else state.cameraState.bearingDegrees
+            val bearingRad = Math.toRadians(mapBearingDeg)
+            val sinB = kotlin.math.sin(bearingRad)
+            val cosB = kotlin.math.cos(bearingRad)
+
+            fun project(pt: LatLng): Offset {
+                val (e, n) = GeoMath.toLocalEnMeters(refCenter, pt)
+                val screenRight = e * cosB - n * sinB
+                val screenForward = e * sinB + n * cosB
+                return Offset(
+                    x = anchorX + (screenRight / metersPerPx).toFloat(),
+                    y = anchorY - (screenForward / metersPerPx).toFloat()
+                )
+            }
+
+            // Active + alternative route overlays if present in preview state
+            if (active != null && active.geometry.size >= 2) {
                 val altColor = if (state.isDarkTheme) Color(0xFF546E7A) else Color(0xFF90A4AE)
                 state.alternativeRoutes
                     .filterIndexed { idx, _ -> idx != state.selectedRouteIndex }
@@ -541,16 +563,18 @@ private fun FallbackPreviewMapCanvas(
                 }
             }
 
-            // Puck chevron
+            // Puck chevron (rotated relative to active course-up map bearing)
             val puck = state.puckState
             if (puck != null) {
-                val puckCenter = Offset(
-                    x = w * 0.5f,
-                    y = if (state.cameraState.mode == MapCameraMode.NAVIGATION_25D) h * 0.67f else h * 0.5f
-                )
+                val puckCenter = if (isOverview) {
+                    project(puck.position)
+                } else {
+                    Offset(x = anchorX, y = anchorY)
+                }
+                val haloRadiusPx = ((puck.accuracyMeters / metersPerPx).toFloat()).coerceIn(28f, 68f)
                 drawCircle(
                     color = HalaTujuPalette.CrispMint.copy(alpha = 0.22f),
-                    radius = 44f,
+                    radius = haloRadiusPx,
                     center = puckCenter
                 )
                 drawCircle(color = Color.White, radius = 22f, center = puckCenter)
@@ -560,7 +584,7 @@ private fun FallbackPreviewMapCanvas(
                     center = puckCenter,
                     style = Stroke(width = 4f)
                 )
-                rotate(degrees = puck.bearingDegrees, pivot = puckCenter) {
+                rotate(degrees = puck.bearingDegrees - mapBearingDeg.toFloat(), pivot = puckCenter) {
                     val arrow = Path().apply {
                         moveTo(puckCenter.x, puckCenter.y - 14f)
                         lineTo(puckCenter.x + 11f, puckCenter.y + 10f)
@@ -572,17 +596,24 @@ private fun FallbackPreviewMapCanvas(
                 }
             }
 
-            // Debug overlay points in preview
+            // Debug overlay points & raw accuracy ring projected in map coordinates (raw=red, kalman=cyan, snapped=green)
             if (state.debugOverlayEnabled && state.debugOverlayData != null) {
-                val dbgCenter = Offset(w * 0.5f, h * 0.5f)
-                state.debugOverlayData.rawFix?.let {
-                    drawCircle(Color.Red, radius = 8f, center = dbgCenter + Offset(-14f, -12f))
+                state.debugOverlayData.rawFix?.let { rawFix ->
+                    val rawCenter = project(rawFix.position)
+                    val rawRadiusPx = ((rawFix.accuracyMeters / metersPerPx).toFloat()).coerceIn(14f, 84f)
+                    drawCircle(
+                        color = Color(0x88FF5252),
+                        radius = rawRadiusPx,
+                        center = rawCenter,
+                        style = Stroke(width = 2.5f)
+                    )
+                    drawCircle(Color(0xFFFF5252), radius = 9f, center = rawCenter)
                 }
-                state.debugOverlayData.kalmanPosition?.let {
-                    drawCircle(Color.Cyan, radius = 8f, center = dbgCenter + Offset(-5f, -4f))
+                state.debugOverlayData.kalmanPosition?.let { kalman ->
+                    drawCircle(Color(0xFF00E5FF), radius = 9f, center = project(kalman))
                 }
-                state.debugOverlayData.snappedPosition?.let {
-                    drawCircle(Color.Green, radius = 8f, center = dbgCenter)
+                state.debugOverlayData.snappedPosition?.let { snapped ->
+                    drawCircle(Color(0xFF00E676), radius = 9f, center = project(snapped))
                 }
             }
         }

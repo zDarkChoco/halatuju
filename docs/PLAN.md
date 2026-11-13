@@ -29,12 +29,12 @@
   - [x] Build Route Preview UI (ETA, distance, arrival clock time, "estimated" label, up to 3 alternatives selectable on map & sheet, Add/Reorder/Remove intermediate stops with auto-reroute, big Start button)
   - [x] Add unit tests with recorded KLCC → KLIA Valhalla JSON fixtures (including maxspeed, lanes, alternatives, avoid tolls) + screenshot tests
 
-- [ ] **M4 — Navigation Session: Kalman, Snap, Bearing, Off-Route, Reroute, 2.5D Camera, Auto-Zoom, Wake Lock**
-  - [ ] Implement `:core:navigation` (`EnuKalmanFilter`, `BearingSmoother`, `RouteSnapper`, `OffRouteDetector`, `DeadReckoner`, `AutoZoomController`, `NavigationEngine`, `NavigationSessionManager`)
-  - [ ] Wire 2.5D camera (`45°–60°` pitch, course-up, lower-third target padding), active vs dimmed traveled route line, 60 fps puck interpolation, overview & recenter buttons
-  - [ ] Handle intermediate stop arrival + prompt/auto-continue to next leg
-  - [ ] Wire `FLAG_KEEP_SCREEN_ON` strictly while active navigation is visible on screen
-  - [ ] Add comprehensive JVM unit tests (Kalman outlier rejection, 359°→0° wrap, parallel-road/overpass snap rejection, 5–8 s + N-fix off-route hysteresis, tunnel dead reckoning, auto-zoom hysteresis + 300 m maneuver zoom-in)
+- [x] **M4 — Navigation Session: Kalman, Snap, Bearing, Off-Route, Reroute, 2.5D Camera, Auto-Zoom, Wake Lock**
+  - [x] Implement `:core:navigation` (`EnuKalmanFilter`, `BearingSmoother`, `RouteSnapper`, `OffRouteDetector`, `DeadReckoner`, `AutoZoomController`, `NavigationEngine`, `NavigationSessionManager`)
+  - [x] Wire 2.5D camera (`45°–60°` pitch, course-up, lower-third target padding), active vs dimmed traveled route line, 60 fps puck interpolation, overview & recenter buttons
+  - [x] Handle intermediate stop arrival + prompt/auto-continue to next leg
+  - [x] Wire `FLAG_KEEP_SCREEN_ON` strictly while active navigation is visible on screen
+  - [x] Add comprehensive JVM unit tests (Kalman outlier rejection, 359°→0° wrap, parallel-road/overpass snap rejection, 5–8 s + N-fix off-route hysteresis, tunnel dead reckoning, auto-zoom hysteresis + 300 m maneuver zoom-in)
 
 - [ ] **M5 — Banner, Lane Guidance, Speed Limit, Overspeed Chime, Voice**
   - [ ] Build Top Maneuver Banner (maneuver arrow, distance, street/exit name, signpost/exit number badge, `"Then ..."` chip, roundabout exit number + arrow)

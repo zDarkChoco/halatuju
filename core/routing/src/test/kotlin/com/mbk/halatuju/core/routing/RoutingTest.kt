@@ -190,6 +190,12 @@ class RoutingTest {
         assertEquals(291, route.legs[1].segmentStartGeometryIndex)
         assertEquals(291, route.legs[1].steps.first().geometryStartIndex)
         assertEquals(1221, route.legs[1].steps.last().geometryEndIndex)
+        val leg1Lanes = route.legs[1].steps.flatMap { it.intersections }.firstOrNull()
+        assertNotNull("Expected lanes in KL Sentral -> KLIA leg", leg1Lanes)
+        assertTrue(
+            "Expected global intersection geometryIndex >= 291 on leg 1, got ${leg1Lanes!!.geometryIndex}",
+            (leg1Lanes.geometryIndex ?: -1) >= 291
+        )
 
         val body1 = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
         assertNotNull("date_time expected on single-route / multi-stop request", body1["date_time"])

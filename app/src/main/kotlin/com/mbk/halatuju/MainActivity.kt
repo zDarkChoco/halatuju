@@ -47,7 +47,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -74,6 +73,8 @@ import com.mbk.halatuju.core.model.MapCameraMode
 import com.mbk.halatuju.core.model.NavRoute
 import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.ThemeMode
+import com.mbk.halatuju.feature.navigation.ActiveNavigationScreen
+import com.mbk.halatuju.feature.navigation.ActiveNavigationViewModel
 import com.mbk.halatuju.feature.search.DroppedPinCard
 import com.mbk.halatuju.feature.search.HomeSearchCard
 import com.mbk.halatuju.feature.search.RouteEndpoint
@@ -85,10 +86,10 @@ import com.mbk.halatuju.feature.settings.AboutLicensesScreen
 import com.mbk.halatuju.feature.settings.SettingsScreen
 import com.mbk.halatuju.feature.settings.SettingsViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.launch
 
 private object HalaTujuRoutes {
     const val HOME = "home"
+    const val NAVIGATION = "navigation"
     const val SETTINGS = "settings"
     const val ABOUT = "about"
 }
@@ -124,10 +125,11 @@ fun HalaTujuAppRoot(
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val settingsViewModel: SettingsViewModel = hiltViewModel()
     val searchViewModel: SearchViewModel = hiltViewModel()
+    val navigationViewModel: ActiveNavigationViewModel = hiltViewModel()
     val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
     val searchState by searchViewModel.uiState.collectAsStateWithLifecycle()
+    val navState by navigationViewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    val coroutineScope = rememberCoroutineScope()
 
     val isDark = when (settings.themeMode) {
         ThemeMode.FOLLOW_SYSTEM -> isSystemInDarkTheme()
@@ -256,10 +258,34 @@ fun HalaTujuAppRoot(
                     onRetryRoute = searchViewModel::onRetryRoute,
                     onDismissRoute = searchViewModel::onClearRoute,
                     onStartNavigation = { route ->
-                        coroutineScope.launch {
-                            snackbarHostState.showSnackbar("Route ready (${route.legs.size} leg)")
+                        navigationViewModel.startNavigation(route)
+                        navController.navigate(HalaTujuRoutes.NAVIGATION) {
+                            launchSingleTop = true
                         }
                     }
+                )
+            }
+
+            composable(HalaTujuRoutes.NAVIGATION) {
+                ActiveNavigationScreen(
+                    uiState = navState,
+                    tileSource = navigationViewModel.tileSource,
+                    isDarkTheme = isDark,
+                    onUserPanMap = navigationViewModel::onUserPanMap,
+                    onToggleOverview = navigationViewModel::onToggleOverview,
+                    onRecenterClick = navigationViewModel::onRecenterClick,
+                    onToggleMute = navigationViewModel::onToggleMute,
+                    onContinueToNextStop = navigationViewModel::onContinueToNextStop,
+                    onEndNavigation = {
+                        val wasFinalArrival =
+                            navState.session.status == com.mbk.halatuju.core.navigation.NavigationStatus.ARRIVED_DESTINATION
+                        navigationViewModel.endNavigation()
+                        if (wasFinalArrival) {
+                            searchViewModel.onClearRoute()
+                        }
+                        navController.popBackStack()
+                    },
+                    onOpenAbout = { navController.navigate(HalaTujuRoutes.ABOUT) }
                 )
             }
 

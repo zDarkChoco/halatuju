@@ -21,6 +21,7 @@ android {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:storage"))
     api(project(":core:location"))
     api(project(":core:routing"))
     implementation(libs.androidx.core.ktx)
