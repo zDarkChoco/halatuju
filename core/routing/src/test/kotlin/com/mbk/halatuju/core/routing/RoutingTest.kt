@@ -8,16 +8,26 @@ import com.mbk.halatuju.core.model.ManeuverType
 import com.mbk.halatuju.core.model.NavRoute
 import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.RoutingAvoidances
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +38,9 @@ import org.junit.Before
 import org.junit.Test
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class RoutingTest {
 
@@ -207,6 +220,95 @@ class RoutingTest {
         val rerouteJson = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
         val firstLoc = rerouteJson["locations"]!!.jsonArray[0].jsonObject
         assertEquals(301, firstLoc["heading"]!!.jsonPrimitive.intOrNull)
+    }
+
+    @Test
+    fun `valhalla router reads HTTP response body on ioDispatcher rather than caller thread and rethrows cancellation`() {
+        val fixture = loadFixture("fixtures/valhalla_klcc_to_klia.json")
+        server.enqueue(MockResponse().setResponseCode(200).setBody(fixture))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(fixture).setHeadersDelay(5, TimeUnit.SECONDS))
+
+        val bodyReadThreads = ArrayList<String>()
+        val threadRecordingClient = okHttpClient.newBuilder()
+            .addInterceptor { chain ->
+                val resp = chain.proceed(chain.request())
+                val rawBody = resp.body
+                val wrapped = object : ResponseBody() {
+                    override fun contentType(): MediaType? = rawBody.contentType()
+                    override fun contentLength(): Long = rawBody.contentLength()
+                    override fun source(): BufferedSource {
+                        val delegate = rawBody.source()
+                        return object : ForwardingSource(delegate) {
+                            override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                                synchronized(bodyReadThreads) {
+                                    bodyReadThreads += Thread.currentThread().name
+                                }
+                                return super.read(sink, byteCount)
+                            }
+                        }.buffer()
+                    }
+                }
+                resp.newBuilder().body(wrapped).build()
+            }
+            .build()
+
+        val mainExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "Test-Fake-Main") }
+        val ioExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "Test-Routing-IO") }
+        val mainDispatcher = mainExecutor.asCoroutineDispatcher()
+        val ioDispatcher = ioExecutor.asCoroutineDispatcher()
+
+        try {
+            val router = ValhallaRouter(
+                okHttpClient = threadRecordingClient,
+                trafficProvider = trafficProvider,
+                json = Json { ignoreUnknownKeys = true },
+                clockMs = { System.nanoTime() / 1_000_000L },
+                cacheTtlMs = 60_000L,
+                ioDispatcher = ioDispatcher
+            )
+            val baseUrl = server.url("/").toString()
+
+            kotlinx.coroutines.runBlocking {
+                withContext(mainDispatcher) {
+                    assertTrue(Thread.currentThread().name.startsWith("Test-Fake-Main"))
+                    val res = router.calculateRoutes(
+                        RouteRequest(
+                            waypoints = listOf(klcc, klia),
+                            baseUrlOverride = baseUrl
+                        )
+                    )
+                    assertTrue(res.isSuccess)
+                }
+
+                val cancellationCaught = AtomicReference<Throwable?>(null)
+                val job = launch(mainDispatcher) {
+                    try {
+                        router.calculateRoutes(
+                            RouteRequest(
+                                waypoints = listOf(klSentral, klia),
+                                baseUrlOverride = baseUrl
+                            )
+                        )
+                    } catch (ce: CancellationException) {
+                        cancellationCaught.set(ce)
+                        throw ce
+                    }
+                }
+                delay(100L)
+                job.cancel()
+                job.join()
+                assertTrue("Expected CancellationException to propagate", cancellationCaught.get() is CancellationException)
+            }
+
+            assertTrue(bodyReadThreads.isNotEmpty())
+            assertTrue(
+                "Expected all body reads on Test-Routing-IO, got $bodyReadThreads",
+                bodyReadThreads.all { it.startsWith("Test-Routing-IO") }
+            )
+        } finally {
+            mainExecutor.shutdownNow()
+            ioExecutor.shutdownNow()
+        }
     }
 
     @Test

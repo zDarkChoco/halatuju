@@ -17,9 +17,13 @@ import com.mbk.halatuju.core.model.SegmentSpeedLimit
 import com.mbk.halatuju.core.model.ServiceEndpoints
 import com.mbk.halatuju.core.model.VoiceInstruction
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -58,7 +62,8 @@ class ValhallaRouter internal constructor(
     private val trafficProvider: TrafficProvider,
     private val json: Json,
     private val clockMs: () -> Long,
-    private val cacheTtlMs: Long
+    private val cacheTtlMs: Long,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : Router {
 
     @Inject
@@ -70,7 +75,8 @@ class ValhallaRouter internal constructor(
         trafficProvider = trafficProvider,
         json = Json { ignoreUnknownKeys = true },
         clockMs = { System.nanoTime() / 1_000_000L },
-        cacheTtlMs = DEFAULT_CACHE_TTL_MS
+        cacheTtlMs = DEFAULT_CACHE_TTL_MS,
+        ioDispatcher = Dispatchers.IO
     )
 
     private data class CacheEntry(
@@ -117,31 +123,38 @@ class ValhallaRouter internal constructor(
             .post(payloadJson.toRequestBody(JSON_MEDIA_TYPE))
             .build()
 
-        return runCatching {
-            okHttpClient.awaitExecute(httpReq).use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) {
-                    throw IOException("Valhalla routing failed (${response.code}): ${body.take(240)}")
-                }
-                val rawRoutes = parseOsrmResponse(
-                    rawJson = body,
-                    waypoints = request.waypoints,
-                    routeIdPrefix = "valhalla"
-                )
-                if (rawRoutes.isEmpty()) {
-                    throw IOException("Valhalla returned no routes")
-                }
-                val estimatedRoutes = reApplyTraffic(rawRoutes, request.departureEpochMs)
-                if (request.vehicleHeadingDegrees == null) {
-                    cacheMutex.withLock {
-                        cache[cacheKey] = CacheEntry(
-                            expiresAtMs = clockMs() + cacheTtlMs,
-                            routes = estimatedRoutes
-                        )
+        return try {
+            val rawRoutes = withContext(ioDispatcher) {
+                okHttpClient.awaitExecute(httpReq).use { response ->
+                    val body = response.body.string()
+                    if (!response.isSuccessful) {
+                        throw IOException("Valhalla routing failed (${response.code}): ${body.take(240)}")
                     }
+                    val decoded = parseOsrmResponse(
+                        rawJson = body,
+                        waypoints = request.waypoints,
+                        routeIdPrefix = "valhalla"
+                    )
+                    if (decoded.isEmpty()) {
+                        throw IOException("Valhalla returned no routes")
+                    }
+                    decoded
                 }
-                estimatedRoutes
             }
+            val estimatedRoutes = reApplyTraffic(rawRoutes, request.departureEpochMs)
+            if (request.vehicleHeadingDegrees == null) {
+                cacheMutex.withLock {
+                    cache[cacheKey] = CacheEntry(
+                        expiresAtMs = clockMs() + cacheTtlMs,
+                        routes = estimatedRoutes
+                    )
+                }
+            }
+            Result.success(estimatedRoutes)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
     }
 

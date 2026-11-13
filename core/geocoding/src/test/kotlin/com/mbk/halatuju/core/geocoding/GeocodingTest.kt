@@ -3,23 +3,35 @@ package com.mbk.halatuju.core.geocoding
 import com.mbk.halatuju.core.model.AppInfo
 import com.mbk.halatuju.core.model.KlDefaults
 import com.mbk.halatuju.core.model.LatLng
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 class GeocodingTest {
@@ -206,6 +218,97 @@ class GeocodingTest {
         assertEquals(2, dispatchTimesMs.size)
         val deltaMs = abs(dispatchTimesMs[1] - dispatchTimesMs[0])
         assertTrue("Expected Nominatim interval >= 1000 ms, was $deltaMs ms", deltaMs >= 1000L)
+    }
+
+    @Test
+    fun `photon and nominatim read HTTP response bodies on ioDispatcher rather than caller thread and rethrow cancellation`() {
+        val photonFixture = loadFixture("fixtures/photon_klcc.json")
+        val nominatimFixture = loadFixture("fixtures/nominatim_reverse_klcc.json")
+        server.enqueue(MockResponse().setResponseCode(200).setBody(photonFixture))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(nominatimFixture))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(photonFixture).setHeadersDelay(5, TimeUnit.SECONDS))
+
+        val bodyReadThreads = ArrayList<String>()
+        val threadRecordingClient = okHttpClient.newBuilder()
+            .addInterceptor { chain ->
+                val resp = chain.proceed(chain.request())
+                val rawBody = resp.body
+                val wrapped = object : ResponseBody() {
+                    override fun contentType(): MediaType? = rawBody.contentType()
+                    override fun contentLength(): Long = rawBody.contentLength()
+                    override fun source(): BufferedSource {
+                        val delegate = rawBody.source()
+                        return object : ForwardingSource(delegate) {
+                            override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                                synchronized(bodyReadThreads) {
+                                    bodyReadThreads += Thread.currentThread().name
+                                }
+                                return super.read(sink, byteCount)
+                            }
+                        }.buffer()
+                    }
+                }
+                resp.newBuilder().body(wrapped).build()
+            }
+            .build()
+
+        val mainExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "Test-Fake-Main") }
+        val ioExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "Test-Geocoding-IO") }
+        val mainDispatcher = mainExecutor.asCoroutineDispatcher()
+        val ioDispatcher = ioExecutor.asCoroutineDispatcher()
+
+        try {
+            val photon = PhotonGeocoder(
+                okHttpClient = threadRecordingClient,
+                json = Json { ignoreUnknownKeys = true },
+                clockMs = { System.nanoTime() / 1_000_000L },
+                cacheTtlMs = 60_000L,
+                maxCacheEntries = 32,
+                ioDispatcher = ioDispatcher
+            )
+            val nominatim = NominatimGeocoder(
+                okHttpClient = threadRecordingClient,
+                json = Json { ignoreUnknownKeys = true },
+                minIntervalMs = 0L,
+                clockMs = { 0L },
+                cacheTtlMs = 60_000L,
+                maxCacheEntries = 32,
+                ioDispatcher = ioDispatcher
+            )
+            val baseUrl = server.url("/").toString()
+
+            kotlinx.coroutines.runBlocking {
+                withContext(mainDispatcher) {
+                    assertTrue(Thread.currentThread().name.startsWith("Test-Fake-Main"))
+                    assertTrue(photon.search("KLCC", bias = KlDefaults.KLCC, baseUrl = baseUrl).isSuccess)
+                    assertTrue(nominatim.reverse(KlDefaults.KLCC, baseUrl = baseUrl).isSuccess)
+                }
+
+                // Verify CancellationException is rethrown cleanly instead of being swallowed by Result.failure
+                val cancellationCaught = AtomicReference<Throwable?>(null)
+                val job = launch(mainDispatcher) {
+                    try {
+                        photon.search("Subang Jaya", bias = KlDefaults.KLCC, baseUrl = baseUrl)
+                    } catch (ce: CancellationException) {
+                        cancellationCaught.set(ce)
+                        throw ce
+                    }
+                }
+                delay(100L)
+                job.cancel()
+                job.join()
+                assertTrue("Expected CancellationException to propagate", cancellationCaught.get() is CancellationException)
+            }
+
+            assertTrue(bodyReadThreads.size >= 2)
+            assertTrue(
+                "Expected all body reads on Test-Geocoding-IO, got $bodyReadThreads",
+                bodyReadThreads.all { it.startsWith("Test-Geocoding-IO") }
+            )
+        } finally {
+            mainExecutor.shutdownNow()
+            ioExecutor.shutdownNow()
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

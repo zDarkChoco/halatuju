@@ -4,8 +4,12 @@ import com.mbk.halatuju.core.model.AppInfo
 import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.ServiceEndpoints
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -29,7 +33,8 @@ class PhotonGeocoder internal constructor(
     private val json: Json,
     private val clockMs: () -> Long,
     private val cacheTtlMs: Long,
-    private val maxCacheEntries: Int
+    private val maxCacheEntries: Int,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     @Inject
@@ -40,7 +45,8 @@ class PhotonGeocoder internal constructor(
         json = Json { ignoreUnknownKeys = true },
         clockMs = { System.nanoTime() / 1_000_000L },
         cacheTtlMs = DEFAULT_CACHE_TTL_MS,
-        maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES
+        maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES,
+        ioDispatcher = Dispatchers.IO
     )
 
     private data class CacheEntry(
@@ -96,21 +102,27 @@ class PhotonGeocoder internal constructor(
             .get()
             .build()
 
-        return runCatching {
-            okHttpClient.awaitExecute(request).use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("Photon search failed with HTTP ${response.code}")
+        return try {
+            val parsed = withContext(ioDispatcher) {
+                okHttpClient.awaitExecute(request).use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("Photon search failed with HTTP ${response.code}")
+                    }
+                    val body = response.body.string()
+                    parseFeatureCollection(body)
                 }
-                val body = response.body.string()
-                val parsed = parseFeatureCollection(body)
-                cacheMutex.withLock {
-                    cache[cacheKey] = CacheEntry(
-                        expiresAtMs = clockMs() + cacheTtlMs,
-                        results = parsed
-                    )
-                }
-                parsed
             }
+            cacheMutex.withLock {
+                cache[cacheKey] = CacheEntry(
+                    expiresAtMs = clockMs() + cacheTtlMs,
+                    results = parsed
+                )
+            }
+            Result.success(parsed)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
     }
 

@@ -98,6 +98,82 @@ object MapLibreRuntime {
     }
 }
 
+private class NativeMapHolder {
+    var mapView: MapView? = null
+    var map: MapLibreMap? by mutableStateOf(null)
+    var activeStyleKey: String? by mutableStateOf(null)
+    var isStarted: Boolean = false
+    var isResumed: Boolean = false
+    var isDestroyed: Boolean = false
+
+    fun attachView(view: MapView, currentLifecycleState: Lifecycle.State) {
+        if (mapView === view) return
+        mapView = view
+        isStarted = false
+        isResumed = false
+        isDestroyed = false
+        view.onCreate(null)
+        syncToLifecycle(currentLifecycleState)
+    }
+
+    fun syncToLifecycle(state: Lifecycle.State) {
+        if (state.isAtLeast(Lifecycle.State.STARTED)) {
+            dispatchStart()
+        }
+        if (state.isAtLeast(Lifecycle.State.RESUMED)) {
+            dispatchResume()
+        }
+    }
+
+    fun dispatchStart() {
+        val mv = mapView ?: return
+        if (!isDestroyed && !isStarted) {
+            isStarted = true
+            mv.onStart()
+        }
+    }
+
+    fun dispatchResume() {
+        dispatchStart()
+        val mv = mapView ?: return
+        if (!isDestroyed && !isResumed) {
+            isResumed = true
+            mv.onResume()
+        }
+    }
+
+    fun dispatchPause() {
+        val mv = mapView ?: return
+        if (!isDestroyed && isResumed) {
+            isResumed = false
+            mv.onPause()
+        }
+    }
+
+    fun dispatchStop() {
+        dispatchPause()
+        val mv = mapView ?: return
+        if (!isDestroyed && isStarted) {
+            isStarted = false
+            mv.onStop()
+        }
+    }
+
+    fun dispatchDestroy(expectedView: MapView? = null) {
+        val mv = mapView ?: return
+        if (expectedView != null && mv !== expectedView) return
+        if (!isDestroyed) {
+            runCatching { map?.cancelTransitions() }
+            dispatchStop()
+            isDestroyed = true
+            map = null
+            activeStyleKey = null
+            mapView = null
+            mv.onDestroy()
+        }
+    }
+}
+
 /**
  * Full-screen interactive MapLibre map surface with:
  * - Light (OpenFreeMap Liberty) & Dark (halatuju_dark.json) styles with 3D buildings
@@ -162,20 +238,21 @@ fun HalaTujuMapSurface(
             )
         } else {
             val layerManager = remember { MapLibreLayerManager() }
-            var mapRef by remember { mutableStateOf<MapLibreMap?>(null) }
-            var activeStyleKey by remember { mutableStateOf<String?>(null) }
-            var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+            val holder = remember { NativeMapHolder() }
 
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { viewContext ->
-                    MapView(viewContext).apply {
-                        onCreate(null)
-                        addOnDidFailLoadingMapListener { errorMessage ->
-                            Log.w("HalaTujuMap", "Map style load failed: $errorMessage")
+                    MapView(viewContext).also { mv ->
+                        holder.attachView(mv, lifecycleOwner.lifecycle.currentState)
+                        mv.addOnDidFailLoadingMapListener { errorMessage ->
+                            if (!holder.isDestroyed && holder.mapView === mv) {
+                                Log.w("HalaTujuMap", "Map style load failed: $errorMessage")
+                            }
                         }
-                        getMapAsync { map ->
-                            map.uiSettings.apply {
+                        mv.getMapAsync { loadedMap ->
+                            if (holder.isDestroyed || holder.mapView !== mv) return@getMapAsync
+                            loadedMap.uiSettings.apply {
                                 isAttributionEnabled = false
                                 isLogoEnabled = false
                                 isCompassEnabled = false
@@ -185,80 +262,43 @@ fun HalaTujuMapSurface(
                                 isZoomGesturesEnabled = true
                                 setCompassGravity(Gravity.TOP or Gravity.END)
                             }
-                            map.addOnCameraMoveStartedListener { reason ->
-                                if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                            loadedMap.addOnCameraMoveStartedListener { reason ->
+                                if (!holder.isDestroyed &&
+                                    reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE
+                                ) {
                                     currentOnUserPan()
                                 }
                             }
-                            map.addOnMapLongClickListener { point ->
+                            loadedMap.addOnMapLongClickListener { point ->
+                                if (holder.isDestroyed) return@addOnMapLongClickListener false
                                 currentOnLongClick(LatLng(point.latitude, point.longitude))
                                 true
                             }
-                            mapRef = map
+                            holder.map = loadedMap
                         }
-                        mapViewRef = this
                     }
+                },
+                onRelease = { releasedView ->
+                    holder.dispatchDestroy(releasedView)
                 }
             )
 
-            DisposableEffect(lifecycleOwner, mapViewRef) {
-                val mv = mapViewRef
-                var isStarted = false
-                var isResumed = false
-                var isDestroyed = false
-
-                fun dispatchStart() {
-                    if (mv != null && !isDestroyed && !isStarted) {
-                        isStarted = true
-                        mv.onStart()
-                    }
-                }
-
-                fun dispatchResume() {
-                    dispatchStart()
-                    if (mv != null && !isDestroyed && !isResumed) {
-                        isResumed = true
-                        mv.onResume()
-                    }
-                }
-
-                fun dispatchPause() {
-                    if (mv != null && !isDestroyed && isResumed) {
-                        isResumed = false
-                        mv.onPause()
-                    }
-                }
-
-                fun dispatchStop() {
-                    dispatchPause()
-                    if (mv != null && !isDestroyed && isStarted) {
-                        isStarted = false
-                        mv.onStop()
-                    }
-                }
-
-                fun dispatchDestroy() {
-                    if (mv != null && !isDestroyed) {
-                        dispatchStop()
-                        isDestroyed = true
-                        mv.onDestroy()
-                    }
-                }
-
+            DisposableEffect(lifecycleOwner, holder) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
-                        Lifecycle.Event.ON_START -> dispatchStart()
-                        Lifecycle.Event.ON_RESUME -> dispatchResume()
-                        Lifecycle.Event.ON_PAUSE -> dispatchPause()
-                        Lifecycle.Event.ON_STOP -> dispatchStop()
-                        Lifecycle.Event.ON_DESTROY -> dispatchDestroy()
+                        Lifecycle.Event.ON_START -> holder.dispatchStart()
+                        Lifecycle.Event.ON_RESUME -> holder.dispatchResume()
+                        Lifecycle.Event.ON_PAUSE -> holder.dispatchPause()
+                        Lifecycle.Event.ON_STOP -> holder.dispatchStop()
+                        Lifecycle.Event.ON_DESTROY -> holder.dispatchDestroy()
                         else -> Unit
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
+                holder.syncToLifecycle(lifecycleOwner.lifecycle.currentState)
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
-                    dispatchDestroy()
+                    holder.dispatchDestroy()
                 }
             }
 
@@ -272,16 +312,20 @@ fun HalaTujuMapSurface(
                     is MapStyleSpec.StyleJson -> "json:${styleSpec.cacheKey}"
                 }
             }
+            val latestStyleKey by rememberUpdatedState(styleKey)
+            val latestAnimatedPuck by rememberUpdatedState(animatedPuck)
 
-            LaunchedEffect(mapRef, styleKey) {
-                val map = mapRef ?: return@LaunchedEffect
-                if (activeStyleKey == styleKey && map.style?.isFullyLoaded == true) return@LaunchedEffect
+            LaunchedEffect(holder.map, styleKey) {
+                val map = holder.map ?: return@LaunchedEffect
+                if (holder.isDestroyed || holder.mapView == null) return@LaunchedEffect
+                if (holder.activeStyleKey == styleKey && map.style?.isFullyLoaded == true) return@LaunchedEffect
                 val builder = when (styleSpec) {
                     is MapStyleSpec.StyleUrl -> Style.Builder().fromUri(styleSpec.url)
                     is MapStyleSpec.StyleJson -> Style.Builder().fromJson(styleSpec.json)
                 }
                 map.setStyle(builder) { loadedStyle ->
-                    activeStyleKey = styleKey
+                    if (holder.isDestroyed || holder.map !== map || styleKey != latestStyleKey) return@setStyle
+                    holder.activeStyleKey = styleKey
                     runCatching {
                         layerManager.installLayers(loadedStyle, currentState.isDarkTheme)
                         layerManager.updateRoutes(
@@ -296,7 +340,7 @@ fun HalaTujuMapSurface(
                             currentState.waypoints,
                             currentState.droppedPin
                         )
-                        layerManager.updatePuck(loadedStyle, animatedPuck)
+                        layerManager.updatePuck(loadedStyle, latestAnimatedPuck)
                         layerManager.updateDebugOverlay(
                             loadedStyle,
                             currentState.debugOverlayEnabled,
@@ -310,8 +354,8 @@ fun HalaTujuMapSurface(
 
             // Update routes, pins & debug overlay when navigation/search state changes
             LaunchedEffect(
-                mapRef,
-                activeStyleKey,
+                holder.map,
+                holder.activeStyleKey,
                 state.activeRoute,
                 state.alternativeRoutes,
                 state.selectedRouteIndex,
@@ -321,7 +365,8 @@ fun HalaTujuMapSurface(
                 state.debugOverlayEnabled,
                 state.debugOverlayData
             ) {
-                val style = mapRef?.style?.takeIf { it.isFullyLoaded } ?: return@LaunchedEffect
+                if (holder.isDestroyed || holder.mapView == null) return@LaunchedEffect
+                val style = holder.map?.style?.takeIf { it.isFullyLoaded } ?: return@LaunchedEffect
                 runCatching {
                     layerManager.updateRoutes(
                         style,
@@ -342,8 +387,9 @@ fun HalaTujuMapSurface(
             }
 
             // Update puck GeoJSON independently at 60 fps during interpolation
-            LaunchedEffect(mapRef, activeStyleKey, animatedPuck) {
-                val style = mapRef?.style?.takeIf { it.isFullyLoaded } ?: return@LaunchedEffect
+            LaunchedEffect(holder.map, holder.activeStyleKey, animatedPuck) {
+                if (holder.isDestroyed || holder.mapView == null) return@LaunchedEffect
+                val style = holder.map?.style?.takeIf { it.isFullyLoaded } ?: return@LaunchedEffect
                 runCatching {
                     layerManager.updatePuck(style, animatedPuck)
                 }.onFailure { err ->
@@ -353,17 +399,18 @@ fun HalaTujuMapSurface(
 
             // Synchronize camera position, tilt, bearing & lower-third padding
             LaunchedEffect(
-                mapRef,
-                activeStyleKey,
+                holder.map,
+                holder.activeStyleKey,
                 state.cameraState,
                 animatedPuck,
                 state.activeRoute?.id,
                 mapViewSize,
                 leftPanelInsetPx
             ) {
-                val map = mapRef ?: return@LaunchedEffect
-                val widthPx = (mapViewRef?.width ?: 0).takeIf { it > 0 } ?: mapViewSize.width
-                val heightPx = (mapViewRef?.height ?: 0).takeIf { it > 0 } ?: mapViewSize.height
+                if (holder.isDestroyed || holder.mapView == null) return@LaunchedEffect
+                val map = holder.map ?: return@LaunchedEffect
+                val widthPx = (holder.mapView?.width ?: 0).takeIf { it > 0 } ?: mapViewSize.width
+                val heightPx = (holder.mapView?.height ?: 0).takeIf { it > 0 } ?: mapViewSize.height
                 if (widthPx <= 32 || heightPx <= 32) return@LaunchedEffect
 
                 val cam = state.cameraState

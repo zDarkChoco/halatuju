@@ -4,9 +4,13 @@ import com.mbk.halatuju.core.model.AppInfo
 import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.ServiceEndpoints
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -31,7 +35,8 @@ class NominatimGeocoder internal constructor(
     private val minIntervalMs: Long,
     private val clockMs: () -> Long,
     private val cacheTtlMs: Long,
-    private val maxCacheEntries: Int
+    private val maxCacheEntries: Int,
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     @Inject
@@ -43,7 +48,8 @@ class NominatimGeocoder internal constructor(
         minIntervalMs = DEFAULT_MIN_INTERVAL_MS,
         clockMs = { System.nanoTime() / 1_000_000L },
         cacheTtlMs = DEFAULT_CACHE_TTL_MS,
-        maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES
+        maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES,
+        ioDispatcher = Dispatchers.IO
     )
 
     private data class CacheEntry(
@@ -97,21 +103,27 @@ class NominatimGeocoder internal constructor(
         // Acquire 1 req/s rate limit gate only for cache misses before hitting Nominatim
         awaitRateLimitSlot()
 
-        return runCatching {
-            okHttpClient.awaitExecute(request).use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("Nominatim reverse failed with HTTP ${response.code}")
+        return try {
+            val place = withContext(ioDispatcher) {
+                okHttpClient.awaitExecute(request).use { response ->
+                    if (!response.isSuccessful) {
+                        throw IOException("Nominatim reverse failed with HTTP ${response.code}")
+                    }
+                    val body = response.body.string()
+                    parseReverseResponse(body, requestedLocation = location)
                 }
-                val body = response.body.string()
-                val place = parseReverseResponse(body, requestedLocation = location)
-                cacheMutex.withLock {
-                    cache[spatialKey] = CacheEntry(
-                        expiresAtMs = clockMs() + cacheTtlMs,
-                        place = place
-                    )
-                }
-                place
             }
+            cacheMutex.withLock {
+                cache[spatialKey] = CacheEntry(
+                    expiresAtMs = clockMs() + cacheTtlMs,
+                    place = place
+                )
+            }
+            Result.success(place)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
     }
 

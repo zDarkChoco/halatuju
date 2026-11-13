@@ -99,6 +99,7 @@ class OfflineE2ENavigationInstrumentedTest {
 
     private lateinit var mockWebServer: MockWebServer
 
+    private val styleRequestCount = AtomicInteger(0)
     private val routeRequestCount = AtomicInteger(0)
     private val rerouteRequestCount = AtomicInteger(0)
     private val sawHeadingOnReroute = AtomicBoolean(false)
@@ -110,6 +111,7 @@ class OfflineE2ENavigationInstrumentedTest {
     @Before
     fun setUp() {
         hiltRule.inject()
+        styleRequestCount.set(0)
         routeRequestCount.set(0)
         rerouteRequestCount.set(0)
         sawHeadingOnReroute.set(false)
@@ -198,6 +200,10 @@ class OfflineE2ENavigationInstrumentedTest {
             composeRule.waitForIdle()
             composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
             composeRule.onNodeWithTag("home_search_card").assertIsDisplayed()
+            assertTrue(
+                "Expected MapLibre to request mock /style.json on Home screen",
+                waitUntil(timeoutMs = 10_000L) { styleRequestCount.get() >= 1 }
+            )
 
             // 1. Search destination via local mock Photon server (debounced 300ms)
             focusAndTypeSearchQuery(tag = "search_to_input", query = "KLIA")
@@ -358,15 +364,23 @@ class OfflineE2ENavigationInstrumentedTest {
 
     private inner class OfflineMockDispatcher : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse {
-            val path = request.requestUrl?.encodedPath.orEmpty()
-            Log.i("HalaTujuE2EMock", "${request.method} ${request.requestUrl}")
-            return when {
-                path.endsWith("/style.json") -> jsonResponse(minimalOfflineStyleJson())
-                path.endsWith("/tiles.json") -> jsonResponse(minimalTileJson())
-                path.startsWith("/api") -> handlePhotonSearch(request.requestUrl?.queryParameter("q").orEmpty())
-                path.startsWith("/reverse") -> jsonResponse(nominatimReverseJson())
-                path.startsWith("/route") -> handleValhallaRoute(request.body.readUtf8())
-                else -> MockResponse().setResponseCode(404).setBody("""{"error":"Not found: $path"}""")
+            return runCatching {
+                val path = request.requestUrl?.encodedPath.orEmpty()
+                Log.i("HalaTujuE2EMock", "${request.method} ${request.requestUrl}")
+                when {
+                    path.endsWith("/style.json") -> {
+                        styleRequestCount.incrementAndGet()
+                        jsonResponse(minimalOfflineStyleJson())
+                    }
+                    path.endsWith("/tiles.json") -> jsonResponse(minimalTileJson())
+                    path.startsWith("/api") -> handlePhotonSearch(request.requestUrl?.queryParameter("q").orEmpty())
+                    path.startsWith("/reverse") -> jsonResponse(nominatimReverseJson())
+                    path.startsWith("/route") -> handleValhallaRoute(request.body.readUtf8())
+                    else -> MockResponse().setResponseCode(404).setBody("""{"error":"Not found: $path"}""")
+                }
+            }.getOrElse { err ->
+                Log.e("HalaTujuE2EMock", "Dispatcher failure for ${request.requestUrl}", err)
+                MockResponse().setResponseCode(500).setBody("""{"error":"${err.message ?: "internal"}"}""")
             }
         }
 
