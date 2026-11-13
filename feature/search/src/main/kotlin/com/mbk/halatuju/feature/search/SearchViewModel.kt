@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -60,6 +62,12 @@ private data class ResolvedRouteQuery(
     val refreshTick: Int
 )
 
+private sealed interface RouteTriggerState {
+    data object Suspended : RouteTriggerState
+    data object Empty : RouteTriggerState
+    data class Query(val query: ResolvedRouteQuery) : RouteTriggerState
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SearchViewModel internal constructor(
@@ -90,7 +98,9 @@ class SearchViewModel internal constructor(
     private val draft = MutableStateFlow(DraftSearchState())
     private val rawQueryFlow = MutableStateFlow("")
     private val routeRefreshTrigger = MutableStateFlow(0)
+    private val isGuidanceSuspended = MutableStateFlow(false)
     private var myLocationRouteAnchor: LatLng? = null
+    private var lastCompletedQuery: ResolvedRouteQuery? = null
 
     val uiState: StateFlow<SearchUiState> = combine(
         draft,
@@ -176,7 +186,8 @@ class SearchViewModel internal constructor(
                 }
         }
 
-        // Reactive routing when endpoints, intermediate stops, avoidances, or Valhalla server URL change
+        // Reactive routing when endpoints, intermediate stops, avoidances, or Valhalla server URL change.
+        // Suspended cleanly while active turn-by-turn navigation owns the session to respect public-server fair use.
         val stabilizedAnchorFlow = locationSourceCoordinator.latestFix
             .map { fix ->
                 val rawPos = fix?.position ?: KlDefaults.KLCC
@@ -191,105 +202,153 @@ class SearchViewModel internal constructor(
             .distinctUntilChanged()
 
         viewModelScope.launch {
-            combine(
-                draft.map { RouteInputs(it.fromEndpoint, it.intermediateStops, it.toEndpoint) }
-                    .distinctUntilChanged(),
-                settingsStore.settings
-                    .map { it.avoidances to it.endpoints.valhallaBaseUrl }
-                    .distinctUntilChanged(),
-                stabilizedAnchorFlow,
-                routeRefreshTrigger
-            ) { inputs, (avoidances, valhallaUrl), anchor, refreshTick ->
-                val destEndpoint = inputs.toEndpoint
-                if (destEndpoint == null) {
-                    null
-                } else {
-                    val originPlace = resolveEndpointPlace(inputs.fromEndpoint, anchor, id = "origin:me")
-                    val destPlace = resolveEndpointPlace(destEndpoint, anchor, id = "dest:me")
-                    ResolvedRouteQuery(
-                        waypoints = listOf(originPlace) + inputs.intermediateStops + destPlace,
-                        avoidances = avoidances,
-                        valhallaBaseUrl = valhallaUrl,
-                        refreshTick = refreshTick
-                    )
+            isGuidanceSuspended
+                .flatMapLatest { suspended ->
+                    if (suspended) {
+                        flowOf(RouteTriggerState.Suspended)
+                    } else {
+                        combine(
+                            draft.map { RouteInputs(it.fromEndpoint, it.intermediateStops, it.toEndpoint) }
+                                .distinctUntilChanged(),
+                            settingsStore.settings
+                                .map { it.avoidances to it.endpoints.valhallaBaseUrl }
+                                .distinctUntilChanged(),
+                            stabilizedAnchorFlow,
+                            routeRefreshTrigger
+                        ) { inputs, (avoidances, valhallaUrl), anchor, refreshTick ->
+                            val destEndpoint = inputs.toEndpoint
+                            if (destEndpoint == null) {
+                                RouteTriggerState.Empty
+                            } else {
+                                val originPlace = resolveEndpointPlace(inputs.fromEndpoint, anchor, id = "origin:me")
+                                val destPlace = resolveEndpointPlace(destEndpoint, anchor, id = "dest:me")
+                                RouteTriggerState.Query(
+                                    ResolvedRouteQuery(
+                                        waypoints = listOf(originPlace) + inputs.intermediateStops + destPlace,
+                                        avoidances = avoidances,
+                                        valhallaBaseUrl = valhallaUrl,
+                                        refreshTick = refreshTick
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
-            }
                 .distinctUntilChanged()
-                .collectLatest { query ->
-                    if (query == null) {
-                        draft.update { it.copy(routePreview = RoutePreviewUiState()) }
-                        return@collectLatest
-                    }
-                    val first = query.waypoints.first()
-                    val last = query.waypoints.last()
-                    if (query.waypoints.size == 2 &&
-                        GeoMath.haversineMeters(first.location, last.location) < 20.0
-                    ) {
-                        draft.update {
-                            it.copy(
-                                routePreview = RoutePreviewUiState(
-                                    isLoading = false,
-                                    candidateRoutes = emptyList(),
-                                    errorMessage = "Origin and destination are the same location.",
-                                    activeAvoidances = query.avoidances
-                                )
-                            )
+                .collectLatest { trigger ->
+                    when (trigger) {
+                        RouteTriggerState.Suspended -> {
+                            draft.update { cur ->
+                                if (cur.routePreview.isLoading) {
+                                    cur.copy(routePreview = cur.routePreview.copy(isLoading = false))
+                                } else {
+                                    cur
+                                }
+                            }
+                            return@collectLatest
                         }
-                        return@collectLatest
-                    }
 
-                    draft.update {
-                        it.copy(
-                            routePreview = it.routePreview.copy(
-                                isLoading = true,
-                                errorMessage = null,
-                                activeAvoidances = query.avoidances
-                            )
-                        )
-                    }
+                        RouteTriggerState.Empty -> {
+                            lastCompletedQuery = null
+                            draft.update { it.copy(routePreview = RoutePreviewUiState()) }
+                            return@collectLatest
+                        }
 
-                    val nowMs = clockMs()
-                    val result = router.calculateRoutes(
-                        RouteRequest(
-                            waypoints = query.waypoints,
-                            avoidances = query.avoidances,
-                            preferAlternates = query.waypoints.size <= 2,
-                            departureEpochMs = nowMs,
-                            baseUrlOverride = query.valhallaBaseUrl
-                        )
-                    )
-                    result.fold(
-                        onSuccess = { routes ->
+                        is RouteTriggerState.Query -> {
+                            val query = trigger.query
+                            if (query == lastCompletedQuery &&
+                                draft.value.routePreview.candidateRoutes.isNotEmpty() &&
+                                draft.value.routePreview.errorMessage == null
+                            ) {
+                                draft.update { cur ->
+                                    if (cur.routePreview.isLoading) {
+                                        cur.copy(routePreview = cur.routePreview.copy(isLoading = false))
+                                    } else {
+                                        cur
+                                    }
+                                }
+                                return@collectLatest
+                            }
+
+                            val first = query.waypoints.first()
+                            val last = query.waypoints.last()
+                            if (query.waypoints.size == 2 &&
+                                GeoMath.haversineMeters(first.location, last.location) < 20.0
+                            ) {
+                                lastCompletedQuery = null
+                                draft.update {
+                                    it.copy(
+                                        routePreview = RoutePreviewUiState(
+                                            isLoading = false,
+                                            candidateRoutes = emptyList(),
+                                            errorMessage = "Origin and destination are the same location.",
+                                            activeAvoidances = query.avoidances
+                                        )
+                                    )
+                                }
+                                return@collectLatest
+                            }
+
                             draft.update {
                                 it.copy(
-                                    routePreview = RoutePreviewUiState(
-                                        isLoading = false,
-                                        candidateRoutes = routes.take(3),
-                                        selectedRouteIndex = 0,
+                                    routePreview = it.routePreview.copy(
+                                        isLoading = true,
                                         errorMessage = null,
-                                        referenceEpochMs = nowMs,
                                         activeAvoidances = query.avoidances
                                     )
                                 )
                             }
-                        },
-                        onFailure = { err ->
-                            draft.update {
-                                it.copy(
-                                    routePreview = RoutePreviewUiState(
-                                        isLoading = false,
-                                        candidateRoutes = emptyList(),
-                                        selectedRouteIndex = 0,
-                                        errorMessage = err.message ?: "Unable to calculate route right now.",
-                                        referenceEpochMs = nowMs,
-                                        activeAvoidances = query.avoidances
-                                    )
+
+                            val nowMs = clockMs()
+                            val result = router.calculateRoutes(
+                                RouteRequest(
+                                    waypoints = query.waypoints,
+                                    avoidances = query.avoidances,
+                                    preferAlternates = query.waypoints.size <= 2,
+                                    departureEpochMs = nowMs,
+                                    baseUrlOverride = query.valhallaBaseUrl
                                 )
-                            }
+                            )
+                            result.fold(
+                                onSuccess = { routes ->
+                                    lastCompletedQuery = query
+                                    draft.update {
+                                        it.copy(
+                                            routePreview = RoutePreviewUiState(
+                                                isLoading = false,
+                                                candidateRoutes = routes.take(3),
+                                                selectedRouteIndex = 0,
+                                                errorMessage = null,
+                                                referenceEpochMs = nowMs,
+                                                activeAvoidances = query.avoidances
+                                            )
+                                        )
+                                    }
+                                },
+                                onFailure = { err ->
+                                    lastCompletedQuery = null
+                                    draft.update {
+                                        it.copy(
+                                            routePreview = RoutePreviewUiState(
+                                                isLoading = false,
+                                                candidateRoutes = emptyList(),
+                                                selectedRouteIndex = 0,
+                                                errorMessage = err.message ?: "Unable to calculate route right now.",
+                                                referenceEpochMs = nowMs,
+                                                activeAvoidances = query.avoidances
+                                            )
+                                        )
+                                    }
+                                }
+                            )
                         }
-                    )
+                    }
                 }
         }
+    }
+
+    fun setGuidanceSuspended(suspended: Boolean) {
+        isGuidanceSuspended.value = suspended
     }
 
     fun onFieldFocused(field: SearchField) {

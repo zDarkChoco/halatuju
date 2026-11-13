@@ -155,35 +155,132 @@ class NavigationEngine {
         newRoute: NavRoute,
         nowEpochMs: Long,
         clockMs: Long,
-        currentState: NavigationSessionState
+        currentState: NavigationSessionState,
+        toleranceKmh: Int = 5
     ): NavigationSessionState {
         activeRoute = newRoute
         currentLegIndex = 0
-        distanceAlongRouteMeters = 0.0
         isRerouting = false
         status = NavigationStatus.ACTIVE
         offRouteDetector.reset(clearCooldown = true)
         voiceTracker.reset()
+
+        val candidatePos = currentState.debugOverlayData.kalmanPosition ?: currentState.puckState.position
+        val speedMps = currentState.debugOverlayData.currentSpeedMps
+        val rawFix = currentState.debugOverlayData.rawFix
+        val accuracyMeters = rawFix?.accuracyMeters ?: currentState.puckState.accuracyMeters
+        val reliableBrg = speedMps >= 2.0f || bearingSmoother.hasReliableBearing
+        val snap = if (newRoute.geometry.size >= 2) {
+            routeSnapper.snap(
+                route = newRoute,
+                position = candidatePos,
+                headingDegrees = bearingSmoother.bearingDegrees,
+                hasReliableBearing = reliableBrg,
+                accuracyMeters = accuracyMeters,
+                minProgressMeters = 0.0,
+                maxSearchDistanceMeters = legEndDistanceMeters(newRoute, 0)
+            )
+        } else {
+            SnapResult(
+                snappedPosition = newRoute.geometry.firstOrNull() ?: candidatePos,
+                snappedBearingDegrees = bearingSmoother.bearingDegrees,
+                distanceAlongRouteMeters = 0.0,
+                segmentIndex = 0,
+                crossTrackErrorMeters = 0.0,
+                headingDeltaDegrees = 0.0,
+                isSnapped = false
+            )
+        }
+
+        val initialPos = newRoute.geometry.firstOrNull() ?: candidatePos
+        val initialBearing = if (newRoute.geometry.size >= 2) {
+            RoutePointSampler.safeSegmentBearing(newRoute.geometry[0], newRoute.geometry[1])
+        } else {
+            bearingSmoother.bearingDegrees
+        }
+
+        distanceAlongRouteMeters = if (snap.isSnapped) snap.distanceAlongRouteMeters else 0.0
+        val displayPos = if (snap.isSnapped) snap.snappedPosition else initialPos
+        val displayBearing = if (snap.isSnapped) snap.snappedBearingDegrees else initialBearing
+        val activeGeomIdx = if (snap.isSnapped) snap.segmentIndex else 0
+        val currentStepIdx = newRoute.legs.firstOrNull()?.let { findCurrentStepIndex(it, activeGeomIdx) } ?: 0
+
         deadReckoner.recordValidFix(
             timestampMs = clockMs,
-            speedMps = currentState.debugOverlayData.currentSpeedMps,
+            speedMps = speedMps,
             onRoute = true,
-            distanceAlongRouteMeters = 0.0
+            distanceAlongRouteMeters = distanceAlongRouteMeters
         )
-        val banner = buildBannerState(newRoute, 0, 0, 0.0)
+
+        val banner = buildBannerState(newRoute, 0, currentStepIdx, distanceAlongRouteMeters)
+        val targetZoom = autoZoom.update(
+            speedMps = speedMps,
+            distanceToNextManeuverMeters = banner.distanceToManeuverMeters,
+            hasUpcomingManeuver = banner.distanceToManeuverMeters > 0.0,
+            timestampMs = clockMs
+        )
+        val speedLimit = lookupSpeedLimit(newRoute, 0, activeGeomIdx)
+        val overspeed = computeOverspeedState(
+            speedMps = speedMps,
+            limit = speedLimit,
+            toleranceKmh = toleranceKmh
+        )
+        val remainingDist = (newRoute.totalDistanceMeters - distanceAlongRouteMeters).coerceAtLeast(0.0)
+        val progressFrac = if (newRoute.totalDistanceMeters > 1.0) {
+            (distanceAlongRouteMeters / newRoute.totalDistanceMeters).toFloat().coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        val remainingRatio = if (newRoute.totalDistanceMeters > 1.0) {
+            (remainingDist / newRoute.totalDistanceMeters).coerceIn(0.0, 1.0)
+        } else {
+            1.0
+        }
+        val remainingDur = newRoute.adjustedDurationSeconds * remainingRatio
+
         return currentState.copy(
             route = newRoute,
             status = NavigationStatus.ACTIVE,
             currentLegIndex = 0,
-            currentStepIndex = 0,
-            distanceAlongRouteMeters = 0.0,
-            remainingDistanceMeters = newRoute.totalDistanceMeters,
-            remainingDurationSeconds = newRoute.adjustedDurationSeconds,
-            estimatedArrivalEpochMs = nowEpochMs + (newRoute.adjustedDurationSeconds * 1000.0).roundToLong(),
+            currentStepIndex = currentStepIdx,
+            distanceAlongRouteMeters = distanceAlongRouteMeters,
+            remainingDistanceMeters = remainingDist,
+            remainingDurationSeconds = remainingDur,
+            estimatedArrivalEpochMs = nowEpochMs + (remainingDur * 1000.0).roundToLong(),
             etaTrafficLabel = newRoute.trafficLabel,
+            progressFraction = progressFrac,
+            cameraState = currentState.cameraState.copy(
+                center = displayPos,
+                zoom = targetZoom,
+                bearingDegrees = displayBearing
+            ),
+            puckState = currentState.puckState.copy(
+                position = displayPos,
+                bearingDegrees = displayBearing.toFloat(),
+                isDeadReckoning = false
+            ),
+            banner = banner,
+            overspeed = overspeed,
             isRerouting = false,
+            isGpsSignalWeak = false,
             arrivedStopPlace = null,
-            banner = banner
+            arrivedStopNumber = 0,
+            totalStopsCount = (newRoute.waypoints.size - 2).coerceAtLeast(0),
+            debugOverlayData = currentState.debugOverlayData.copy(
+                snappedPosition = if (snap.isSnapped) snap.snappedPosition else initialPos,
+                crossTrackErrorMeters = if (snap.isSnapped) {
+                    snap.crossTrackErrorMeters
+                } else {
+                    GeoMath.haversineMeters(candidatePos, initialPos)
+                },
+                headingDeltaDegrees = if (snap.isSnapped) snap.headingDeltaDegrees else 0.0,
+                offRouteConsecutiveCount = 0,
+                offRouteDurationSeconds = 0.0,
+                isOffRoute = false,
+                isDeadReckoning = false,
+                targetZoom = targetZoom,
+                stepManeuverSummary = "${banner.maneuverType}:${banner.maneuverModifier} (${banner.distanceToManeuverMeters.roundToInt()}m)"
+            )
         )
     }
 

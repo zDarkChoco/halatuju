@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isEnabled
@@ -50,6 +51,7 @@ import okhttp3.mockwebserver.RecordedRequest
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -102,6 +104,8 @@ class OfflineE2ENavigationInstrumentedTest {
     private val styleRequestCount = AtomicInteger(0)
     private val routeRequestCount = AtomicInteger(0)
     private val rerouteRequestCount = AtomicInteger(0)
+    private val nonRerouteRoutesDuringNav = AtomicInteger(0)
+    private val activeNavigationEntered = AtomicBoolean(false)
     private val sawHeadingOnReroute = AtomicBoolean(false)
 
     private val originKlcc = KlDefaults.KLCC
@@ -114,6 +118,8 @@ class OfflineE2ENavigationInstrumentedTest {
         styleRequestCount.set(0)
         routeRequestCount.set(0)
         rerouteRequestCount.set(0)
+        nonRerouteRoutesDuringNav.set(0)
+        activeNavigationEntered.set(false)
         sawHeadingOnReroute.set(false)
 
         mockWebServer = MockWebServer()
@@ -242,6 +248,7 @@ class OfflineE2ENavigationInstrumentedTest {
                         .fetchSemanticsNodes().isNotEmpty()
             }
             composeRule.waitForIdle()
+            activeNavigationEntered.set(true)
             composeRule.onNodeWithTag("start_navigation_button").assertIsEnabled().performClick()
 
             // 4. Verify active turn-by-turn UI, lane guidance, speed badge, debug overlay & OS notification
@@ -253,6 +260,28 @@ class OfflineE2ENavigationInstrumentedTest {
             composeRule.onNodeWithTag("nav_maneuver_banner").assertIsDisplayed()
             composeRule.onNodeWithTag("nav_end_button").assertIsDisplayed()
             composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
+            composeRule.waitUntil(timeoutMillis = 5_000L) {
+                val attr = composeRule.onNodeWithTag("osm_attribution").getBoundsInRoot()
+                val bottomBar = composeRule.onNodeWithTag("nav_bottom_bar").getBoundsInRoot()
+                attr.bottom.value <= bottomBar.top.value + 0.5f ||
+                    attr.left.value >= bottomBar.right.value - 0.5f
+            }
+            val attributionBounds = composeRule.onNodeWithTag("osm_attribution").getBoundsInRoot()
+            val bottomBarBounds = composeRule.onNodeWithTag("nav_bottom_bar").getBoundsInRoot()
+            val speedClusterBounds = composeRule.onNodeWithTag("nav_speed_cluster").getBoundsInRoot()
+            assertTrue(
+                "Attribution ($attributionBounds) must not overlap nav_bottom_bar ($bottomBarBounds)",
+                attributionBounds.bottom.value <= bottomBarBounds.top.value + 0.5f ||
+                    bottomBarBounds.bottom.value <= attributionBounds.top.value + 0.5f ||
+                    attributionBounds.left.value >= bottomBarBounds.right.value - 0.5f
+            )
+            assertTrue(
+                "Attribution ($attributionBounds) must not overlap nav_speed_cluster ($speedClusterBounds)",
+                attributionBounds.bottom.value <= speedClusterBounds.top.value + 0.5f ||
+                    speedClusterBounds.bottom.value <= attributionBounds.top.value + 0.5f ||
+                    attributionBounds.right.value <= speedClusterBounds.left.value + 0.5f ||
+                    speedClusterBounds.right.value <= attributionBounds.left.value + 0.5f
+            )
 
             val activeNotif = waitUntilNotNull(timeoutMs = 10_000L) {
                 notificationManager.activeNotifications.firstOrNull {
@@ -284,12 +313,17 @@ class OfflineE2ENavigationInstrumentedTest {
             runCatching { offrouteButton.performScrollTo() }
             offrouteButton.performClick()
             composeRule.waitUntil(timeoutMillis = 22_000L) {
+                val st = sessionManager.state.value
                 rerouteRequestCount.get() >= 1 &&
                     sawHeadingOnReroute.get() &&
-                    sessionManager.state.value.route?.legs?.size == 1 &&
-                    !sessionManager.state.value.isRerouting
+                    st.route?.legs?.size == 1 &&
+                    !st.isRerouting &&
+                    !st.debugOverlayData.isOffRoute &&
+                    st.debugOverlayData.snappedPosition != null &&
+                    st.distanceAlongRouteMeters > 0.0
             }
             composeRule.waitForIdle()
+            Thread.sleep(350L)
             CiArtifactCapture.captureScreenshot(device, "ci_06_e2e_post_reroute.png")
 
             // 7. Wait for arrival at final destination ("You have arrived") -> tap Done -> clean IDLE
@@ -310,6 +344,12 @@ class OfflineE2ENavigationInstrumentedTest {
             composeRule.waitUntil(timeoutMillis = 5_000L) {
                 composeRule.onAllNodesWithTag("home_search_card").fetchSemanticsNodes().isNotEmpty()
             }
+            composeRule.waitForIdle()
+            assertEquals(
+                "Expected zero non-reroute /route requests while active navigation ran",
+                0,
+                nonRerouteRoutesDuringNav.get()
+            )
         } catch (t: Throwable) {
             CiArtifactCapture.captureScreenshot(device, "ci_e2e_failure.png")
             runCatching { composeRule.onRoot(useUnmergedTree = true).printToLog("E2E_FAILURE_TREE") }
@@ -434,10 +474,15 @@ class OfflineE2ENavigationInstrumentedTest {
                 val origin = pts[0]
                 val dest = pts[1]
                 jsonResponse(buildSingleLegValhallaResponse(origin, dest, includeAlternative = false))
-            } else if (pts.size >= 3) {
-                jsonResponse(buildTwoLegValhallaResponse(pts[0], pts[1], pts[2]))
             } else {
-                jsonResponse(buildSingleLegValhallaResponse(pts[0], pts.last(), includeAlternative = true))
+                if (activeNavigationEntered.get()) {
+                    nonRerouteRoutesDuringNav.incrementAndGet()
+                }
+                if (pts.size >= 3) {
+                    jsonResponse(buildTwoLegValhallaResponse(pts[0], pts[1], pts[2]))
+                } else {
+                    jsonResponse(buildSingleLegValhallaResponse(pts[0], pts.last(), includeAlternative = true))
+                }
             }
         }
     }

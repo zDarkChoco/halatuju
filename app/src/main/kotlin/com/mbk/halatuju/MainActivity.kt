@@ -291,9 +291,10 @@ fun HalaTujuAppRoot(
             }
         }
 
-        LaunchedEffect(navState.session.status) {
-            val status = navState.session.status
-            if (status != NavigationStatus.IDLE) {
+        val isGuidanceActive = navState.session.status != NavigationStatus.IDLE
+        LaunchedEffect(isGuidanceActive) {
+            searchViewModel.setGuidanceSuspended(isGuidanceActive)
+            if (isGuidanceActive) {
                 sawActiveNavigationInSession = true
             } else if (sawActiveNavigationInSession) {
                 sawActiveNavigationInSession = false
@@ -380,6 +381,7 @@ fun HalaTujuAppRoot(
                     onRetryRoute = searchViewModel::onRetryRoute,
                     onDismissRoute = searchViewModel::onClearRoute,
                     onStartNavigation = { route ->
+                        searchViewModel.setGuidanceSuspended(true)
                         navigationViewModel.startNavigation(route)
                         navController.navigate(HalaTujuRoutes.NAVIGATION) {
                             launchSingleTop = true
@@ -409,10 +411,10 @@ fun HalaTujuAppRoot(
                     onEndNavigation = {
                         val wasFinalArrival =
                             navState.session.status == NavigationStatus.ARRIVED_DESTINATION
-                        navigationViewModel.endNavigation()
                         if (wasFinalArrival) {
                             searchViewModel.onClearRoute()
                         }
+                        navigationViewModel.endNavigation()
                         navController.popBackStack()
                     },
                     onOpenAbout = { navController.navigate(HalaTujuRoutes.ABOUT) },

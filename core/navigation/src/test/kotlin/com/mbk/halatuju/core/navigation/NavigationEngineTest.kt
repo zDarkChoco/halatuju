@@ -695,16 +695,69 @@ class NavigationEngineTest {
         }
         assertTrue("Sustained detour off-corridor must trigger reroute", rerouteTriggered)
 
-        // Applying rerouted route clears Rerouting indicator cleanly
+        // Applying rerouted route clears Rerouting indicator, resets debug overlay off-route state,
+        // snaps onto the new route polyline, and refreshes speed limit immediately
+        val rerouteOrigin = state.debugOverlayData.kalmanPosition!!
+        val reroutedPts = (0..12).map { idx ->
+            GeoMath.fromLocalEnMeters(rerouteOrigin, eastMeters = idx * 100.0, northMeters = 0.0)
+        }
+        val reroutedLeg = RouteLeg(
+            summary = "Rerouted Road",
+            distanceMeters = 1_200.0,
+            durationSeconds = 60.0,
+            steps = listOf(
+                RouteStep(
+                    instructionText = "Continue east on Rerouted Road",
+                    roadName = "Rerouted Road",
+                    maneuverType = ManeuverType.DEPART,
+                    maneuverModifier = ManeuverModifier.STRAIGHT,
+                    maneuverLocation = reroutedPts.first(),
+                    bearingBefore = 90.0,
+                    bearingAfter = 90.0,
+                    distanceMeters = 1_200.0,
+                    durationSeconds = 60.0,
+                    geometryStartIndex = 0,
+                    geometryEndIndex = 12
+                )
+            ),
+            segmentMaxSpeeds = List(12) {
+                SegmentSpeedLimit(speedKmh = 70, isExplicitNone = false, isUnknown = false)
+            },
+            segmentStartGeometryIndex = 0
+        )
+        val reroutedRoute = NavRoute(
+            id = "reroute_east_test",
+            geometry = reroutedPts,
+            cumulativeDistancesMeters = (0..12).map { it * 100.0 },
+            totalDistanceMeters = 1_200.0,
+            baseDurationSeconds = 60.0,
+            adjustedDurationSeconds = 60.0,
+            trafficEstimated = true,
+            legs = listOf(reroutedLeg),
+            waypoints = listOf(
+                Place("orig", "Origin", "", reroutedPts.first()),
+                Place("dest", "Dest", "", reroutedPts.last())
+            ),
+            summaryLabel = "Rerouted Road"
+        )
         val rerouted = engine.applyReroutedRoute(
-            newRoute = straightNorthRoute(lengthMeters = 1_200.0),
+            newRoute = reroutedRoute,
             nowEpochMs = epochMs,
             clockMs = clockMs,
-            currentState = state
+            currentState = state,
+            toleranceKmh = 5
         )
         assertFalse(rerouted.isRerouting)
+        assertFalse(rerouted.isGpsSignalWeak)
         assertEquals(NavigationStatus.ACTIVE, rerouted.status)
         assertEquals(1_200.0, rerouted.remainingDistanceMeters, 1e-6)
+        assertFalse(rerouted.debugOverlayData.isOffRoute)
+        assertFalse(rerouted.debugOverlayData.isDeadReckoning)
+        assertEquals(0, rerouted.debugOverlayData.offRouteConsecutiveCount)
+        assertEquals(0.0, rerouted.debugOverlayData.offRouteDurationSeconds, 1e-6)
+        assertNotNull(rerouted.debugOverlayData.snappedPosition)
+        assertTrue(rerouted.debugOverlayData.crossTrackErrorMeters < 5.0)
+        assertEquals(70, rerouted.overspeed.speedLimit.speedKmh)
     }
 
     @Test

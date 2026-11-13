@@ -782,6 +782,9 @@ class MultiDeviceNavigationScreenshotTest {
         val laneBounds = composeRule.onNodeWithTag("nav_lane_guidance_strip").getBoundsInRoot()
         val bottomBounds = composeRule.onNodeWithTag("nav_bottom_bar").getBoundsInRoot()
         val speedBounds = composeRule.onNodeWithTag("nav_speed_cluster").getBoundsInRoot()
+        val attributionBounds = composeRule.onNodeWithTag("osm_attribution").getBoundsInRoot()
+        val muteBounds = composeRule.onNodeWithTag("nav_mute_button").getBoundsInRoot()
+        val overviewBounds = composeRule.onNodeWithTag("nav_overview_button").getBoundsInRoot()
 
         fun noOverlap(a: androidx.compose.ui.unit.DpRect, b: androidx.compose.ui.unit.DpRect): Boolean {
             return a.right.value <= b.left.value + 0.5f ||
@@ -794,6 +797,10 @@ class MultiDeviceNavigationScreenshotTest {
         assertTrue("Lanes overlap bottom bar ($laneBounds vs $bottomBounds)", noOverlap(laneBounds, bottomBounds))
         assertTrue("Banner overlaps speed cluster ($bannerBounds vs $speedBounds)", noOverlap(bannerBounds, speedBounds))
         assertTrue("Bottom bar overlaps speed cluster ($bottomBounds vs $speedBounds)", noOverlap(bottomBounds, speedBounds))
+        assertTrue("Attribution overlaps bottom bar ($attributionBounds vs $bottomBounds)", noOverlap(attributionBounds, bottomBounds))
+        assertTrue("Attribution overlaps speed cluster ($attributionBounds vs $speedBounds)", noOverlap(attributionBounds, speedBounds))
+        assertTrue("Attribution overlaps mute button ($attributionBounds vs $muteBounds)", noOverlap(attributionBounds, muteBounds))
+        assertTrue("Attribution overlaps overview button ($attributionBounds vs $overviewBounds)", noOverlap(attributionBounds, overviewBounds))
 
         listOf("nav_mute_button", "nav_overview_button", "nav_end_button").forEach { tag ->
             val bounds = composeRule.onNodeWithTag(tag).getBoundsInRoot()

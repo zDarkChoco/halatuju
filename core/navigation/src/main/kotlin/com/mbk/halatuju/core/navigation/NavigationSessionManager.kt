@@ -342,7 +342,8 @@ class NavigationSessionManager internal constructor(
                                     newRoute = newRoute,
                                     nowEpochMs = epochMs(),
                                     clockMs = clockMs(),
-                                    currentState = _state.value
+                                    currentState = _state.value,
+                                    toleranceKmh = settings.overspeedToleranceKmh
                                 )
                             )
                         } else {

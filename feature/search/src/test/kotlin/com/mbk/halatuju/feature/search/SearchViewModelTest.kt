@@ -257,6 +257,60 @@ class SearchViewModelTest {
         collector.cancel()
     }
 
+    @Test
+    fun `suspending search routing during active navigation ignores location drift and preserves route preview`() = runTest(testDispatcher) {
+        val collector = backgroundScope.launch { viewModel.uiState.collect {} }
+        runCurrent()
+
+        coordinator.recordLatestFix(
+            LocationFix(
+                position = KlDefaults.KLCC,
+                accuracyMeters = 6f,
+                speedMps = 0f,
+                bearingDegrees = 90f,
+                timestampMs = 1_000L,
+                provider = LocationProviderKind.SIMULATED
+            )
+        )
+        runCurrent()
+
+        viewModel.onFieldFocused(SearchField.TO)
+        runCurrent()
+        viewModel.onPlaceSelected(klia)
+        runCurrent()
+        assertEquals(1, fakeRouter.requests.size)
+        assertEquals(3, viewModel.uiState.value.routePreview.candidateRoutes.size)
+
+        // Start guidance: subsequent GPS motion (>200m steps) must NOT trigger background SearchViewModel /route calls
+        viewModel.setGuidanceSuspended(true)
+        runCurrent()
+
+        listOf(250.0, 500.0, 800.0, 1_100.0).forEachIndexed { idx, eastMeters ->
+            coordinator.recordLatestFix(
+                LocationFix(
+                    position = com.mbk.halatuju.core.model.GeoMath.fromLocalEnMeters(KlDefaults.KLCC, eastMeters = eastMeters, northMeters = 0.0),
+                    accuracyMeters = 6f,
+                    speedMps = 18f,
+                    bearingDegrees = 90f,
+                    timestampMs = 2_000L + idx * 1_000L,
+                    provider = LocationProviderKind.SIMULATED
+                )
+            )
+            runCurrent()
+        }
+        assertEquals(1, fakeRouter.requests.size)
+        assertEquals(3, viewModel.uiState.value.routePreview.candidateRoutes.size)
+
+        // Ending on final arrival clears route first, then unsuspends -> zero extra /route calls
+        viewModel.onClearRoute()
+        viewModel.setGuidanceSuspended(false)
+        runCurrent()
+        assertEquals(1, fakeRouter.requests.size)
+        assertNull(viewModel.uiState.value.toEndpoint)
+
+        collector.cancel()
+    }
+
     private class FakeGeocoder(
         private val searchResults: List<Place>,
         private val reversePlace: Place?

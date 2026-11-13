@@ -1,6 +1,7 @@
 package com.mbk.halatuju
 
 import android.util.Log
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 
 /**
@@ -14,6 +15,22 @@ object CiArtifactCapture {
         runCatching {
             device.executeShellCommand("mkdir -p $DEVICE_DIR")
             device.executeShellCommand("chmod 777 $DEVICE_DIR")
+        }
+        dismissSystemDialogs(device)
+    }
+
+    fun dismissSystemDialogs(device: UiDevice) {
+        runCatching {
+            if (device.findObject(By.textContains("isn't responding")) != null) {
+                for (label in listOf("Wait", "Close app", "OK")) {
+                    val btn = device.findObject(By.text(label))
+                    if (btn != null) {
+                        btn.click()
+                        Thread.sleep(300L)
+                        break
+                    }
+                }
+            }
         }
     }
 
