@@ -2,7 +2,9 @@ package com.mbk.halatuju.core.map
 
 import android.content.Context
 import android.graphics.Color as AndroidColor
+import android.os.Build
 import android.os.SystemClock
+import android.util.Log
 import android.view.Gravity
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -64,6 +66,8 @@ import org.maplibre.android.module.http.HttpRequestUtil
 import kotlin.math.abs
 
 object MapLibreRuntime {
+    private const val TAG = "HalaTujuMap"
+
     @Volatile
     private var initAttempted = false
 
@@ -75,11 +79,18 @@ object MapLibreRuntime {
         synchronized(this) {
             if (initAttempted) return nativeReady
             initAttempted = true
+            if ("robolectric".equals(Build.FINGERPRINT, ignoreCase = true)) {
+                nativeReady = false
+                return false
+            }
             nativeReady = runCatching {
-                HttpRequestUtil.setOkHttpClient(MapHttpClientFactory.createTileHttpClient(context.cacheDir))
-                MapLibre.getInstance(context.applicationContext)
+                val appContext = context.applicationContext
+                // MapLibre.getInstance must precede HttpRequestUtil.setOkHttpClient (its static init calls HttpIdentifier).
+                MapLibre.getInstance(appContext)
+                HttpRequestUtil.setOkHttpClient(MapHttpClientFactory.createTileHttpClient(appContext.cacheDir))
                 true
-            }.getOrElse {
+            }.getOrElse { err ->
+                Log.w(TAG, "Native MapLibre unavailable, using fallback preview canvas", err)
                 false
             }
             return nativeReady
@@ -135,7 +146,7 @@ fun HalaTujuMapSurface(
         animatedPuck = puckAnimator.currentAt(SystemClock.uptimeMillis())
     }
 
-    var mapViewSize by remember { mutableStateOf(IntSize(1080, 1920)) }
+    var mapViewSize by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
 
     Box(
@@ -160,6 +171,9 @@ fun HalaTujuMapSurface(
                 factory = { viewContext ->
                     MapView(viewContext).apply {
                         onCreate(null)
+                        addOnDidFailLoadingMapListener { errorMessage ->
+                            Log.w("HalaTujuMap", "Map style load failed: $errorMessage")
+                        }
                         getMapAsync { map ->
                             map.uiSettings.apply {
                                 isAttributionEnabled = false
@@ -189,22 +203,62 @@ fun HalaTujuMapSurface(
 
             DisposableEffect(lifecycleOwner, mapViewRef) {
                 val mv = mapViewRef
+                var isStarted = false
+                var isResumed = false
+                var isDestroyed = false
+
+                fun dispatchStart() {
+                    if (mv != null && !isDestroyed && !isStarted) {
+                        isStarted = true
+                        mv.onStart()
+                    }
+                }
+
+                fun dispatchResume() {
+                    dispatchStart()
+                    if (mv != null && !isDestroyed && !isResumed) {
+                        isResumed = true
+                        mv.onResume()
+                    }
+                }
+
+                fun dispatchPause() {
+                    if (mv != null && !isDestroyed && isResumed) {
+                        isResumed = false
+                        mv.onPause()
+                    }
+                }
+
+                fun dispatchStop() {
+                    dispatchPause()
+                    if (mv != null && !isDestroyed && isStarted) {
+                        isStarted = false
+                        mv.onStop()
+                    }
+                }
+
+                fun dispatchDestroy() {
+                    if (mv != null && !isDestroyed) {
+                        dispatchStop()
+                        isDestroyed = true
+                        mv.onDestroy()
+                    }
+                }
+
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
-                        Lifecycle.Event.ON_START -> mv?.onStart()
-                        Lifecycle.Event.ON_RESUME -> mv?.onResume()
-                        Lifecycle.Event.ON_PAUSE -> mv?.onPause()
-                        Lifecycle.Event.ON_STOP -> mv?.onStop()
-                        Lifecycle.Event.ON_DESTROY -> mv?.onDestroy()
+                        Lifecycle.Event.ON_START -> dispatchStart()
+                        Lifecycle.Event.ON_RESUME -> dispatchResume()
+                        Lifecycle.Event.ON_PAUSE -> dispatchPause()
+                        Lifecycle.Event.ON_STOP -> dispatchStop()
+                        Lifecycle.Event.ON_DESTROY -> dispatchDestroy()
                         else -> Unit
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
-                    mv?.onPause()
-                    mv?.onStop()
-                    mv?.onDestroy()
+                    dispatchDestroy()
                 }
             }
 
@@ -228,33 +282,36 @@ fun HalaTujuMapSurface(
                 }
                 map.setStyle(builder) { loadedStyle ->
                     activeStyleKey = styleKey
-                    layerManager.installLayers(loadedStyle, currentState.isDarkTheme)
-                    layerManager.updateRoutes(
-                        loadedStyle,
-                        currentState.activeRoute,
-                        currentState.alternativeRoutes,
-                        currentState.selectedRouteIndex,
-                        currentState.traveledDistanceMeters
-                    )
-                    layerManager.updatePins(
-                        loadedStyle,
-                        currentState.waypoints,
-                        currentState.droppedPin
-                    )
-                    layerManager.updatePuck(loadedStyle, animatedPuck)
-                    layerManager.updateDebugOverlay(
-                        loadedStyle,
-                        currentState.debugOverlayEnabled,
-                        currentState.debugOverlayData
-                    )
+                    runCatching {
+                        layerManager.installLayers(loadedStyle, currentState.isDarkTheme)
+                        layerManager.updateRoutes(
+                            loadedStyle,
+                            currentState.activeRoute,
+                            currentState.alternativeRoutes,
+                            currentState.selectedRouteIndex,
+                            currentState.traveledDistanceMeters
+                        )
+                        layerManager.updatePins(
+                            loadedStyle,
+                            currentState.waypoints,
+                            currentState.droppedPin
+                        )
+                        layerManager.updatePuck(loadedStyle, animatedPuck)
+                        layerManager.updateDebugOverlay(
+                            loadedStyle,
+                            currentState.debugOverlayEnabled,
+                            currentState.debugOverlayData
+                        )
+                    }.onFailure { err ->
+                        Log.w("HalaTujuMap", "Failed to apply style layers", err)
+                    }
                 }
             }
 
-            // Update GeoJSON sources smoothly whenever state or animated puck ticks
+            // Update routes, pins & debug overlay when navigation/search state changes
             LaunchedEffect(
                 mapRef,
                 activeStyleKey,
-                animatedPuck,
                 state.activeRoute,
                 state.alternativeRoutes,
                 state.selectedRouteIndex,
@@ -265,20 +322,33 @@ fun HalaTujuMapSurface(
                 state.debugOverlayData
             ) {
                 val style = mapRef?.style?.takeIf { it.isFullyLoaded } ?: return@LaunchedEffect
-                layerManager.updateRoutes(
-                    style,
-                    state.activeRoute,
-                    state.alternativeRoutes,
-                    state.selectedRouteIndex,
-                    state.traveledDistanceMeters
-                )
-                layerManager.updatePins(style, state.waypoints, state.droppedPin)
-                layerManager.updatePuck(style, animatedPuck)
-                layerManager.updateDebugOverlay(
-                    style,
-                    state.debugOverlayEnabled,
-                    state.debugOverlayData
-                )
+                runCatching {
+                    layerManager.updateRoutes(
+                        style,
+                        state.activeRoute,
+                        state.alternativeRoutes,
+                        state.selectedRouteIndex,
+                        state.traveledDistanceMeters
+                    )
+                    layerManager.updatePins(style, state.waypoints, state.droppedPin)
+                    layerManager.updateDebugOverlay(
+                        style,
+                        state.debugOverlayEnabled,
+                        state.debugOverlayData
+                    )
+                }.onFailure { err ->
+                    Log.w("HalaTujuMap", "Route layer update failed", err)
+                }
+            }
+
+            // Update puck GeoJSON independently at 60 fps during interpolation
+            LaunchedEffect(mapRef, activeStyleKey, animatedPuck) {
+                val style = mapRef?.style?.takeIf { it.isFullyLoaded } ?: return@LaunchedEffect
+                runCatching {
+                    layerManager.updatePuck(style, animatedPuck)
+                }.onFailure { err ->
+                    Log.w("HalaTujuMap", "Puck layer update failed", err)
+                }
             }
 
             // Synchronize camera position, tilt, bearing & lower-third padding
@@ -292,75 +362,106 @@ fun HalaTujuMapSurface(
                 leftPanelInsetPx
             ) {
                 val map = mapRef ?: return@LaunchedEffect
+                val widthPx = (mapViewRef?.width ?: 0).takeIf { it > 0 } ?: mapViewSize.width
+                val heightPx = (mapViewRef?.height ?: 0).takeIf { it > 0 } ?: mapViewSize.height
+                if (widthPx <= 32 || heightPx <= 32) return@LaunchedEffect
+
                 val cam = state.cameraState
-                val widthPx = mapViewSize.width.coerceAtLeast(1)
-                val heightPx = mapViewSize.height.coerceAtLeast(1)
+                runCatching {
+                    when (cam.mode) {
+                        MapCameraMode.FREE_PAN -> Unit
 
-                when (cam.mode) {
-                    MapCameraMode.FREE_PAN -> Unit
+                        MapCameraMode.OVERVIEW -> {
+                            val pts = state.activeRoute?.geometry
+                                ?.takeIf { it.size >= 2 }
+                                ?: state.waypoints.map { it.location }.takeIf { it.size >= 2 }
+                            if (pts != null) {
+                                val builder = LatLngBounds.Builder()
+                                pts.forEach { pt ->
+                                    builder.include(org.maplibre.android.geometry.LatLng(pt.latitude, pt.longitude))
+                                }
+                                // Keep a tiny minimal bounding box so collinear/identical endpoints never throw
+                                val first = pts.first()
+                                val nePad = GeoMath.fromLocalEnMeters(first, eastMeters = 25.0, northMeters = 25.0)
+                                val swPad = GeoMath.fromLocalEnMeters(first, eastMeters = -25.0, northMeters = -25.0)
+                                builder.include(org.maplibre.android.geometry.LatLng(nePad.latitude, nePad.longitude))
+                                builder.include(org.maplibre.android.geometry.LatLng(swPad.latitude, swPad.longitude))
 
-                    MapCameraMode.OVERVIEW -> {
-                        val pts = state.activeRoute?.geometry
-                            ?.takeIf { it.size >= 2 }
-                            ?: state.waypoints.map { it.location }.takeIf { it.size >= 2 }
-                        if (pts != null) {
-                            val builder = LatLngBounds.Builder()
-                            pts.forEach { pt ->
-                                builder.include(org.maplibre.android.geometry.LatLng(pt.latitude, pt.longitude))
+                                val basePadH = with(density) { 48.dp.roundToPx() }
+                                val maxHorizSum = (widthPx * 0.6f).toInt().coerceAtLeast(16)
+                                var padLeft = (leftPanelInsetPx + basePadH).coerceAtMost(maxHorizSum - 8)
+                                var padRight = basePadH.coerceAtMost((maxHorizSum - padLeft).coerceAtLeast(8))
+                                if (padLeft + padRight >= widthPx) {
+                                    padLeft = (widthPx * 0.1f).toInt()
+                                    padRight = (widthPx * 0.1f).toInt()
+                                }
+
+                                val desiredTop = with(density) { 120.dp.roundToPx() }
+                                val desiredBottom = with(density) { 180.dp.roundToPx() }
+                                val maxVertSum = (heightPx * 0.6f).toInt().coerceAtLeast(16)
+                                val totalVert = desiredTop + desiredBottom
+                                val (padTop, padBottom) = if (totalVert > maxVertSum) {
+                                    val scale = maxVertSum.toFloat() / totalVert.toFloat()
+                                    (desiredTop * scale).toInt() to (desiredBottom * scale).toInt()
+                                } else {
+                                    desiredTop to desiredBottom
+                                }
+
+                                map.animateCamera(
+                                    CameraUpdateFactory.newLatLngBounds(
+                                        builder.build(),
+                                        padLeft,
+                                        padTop,
+                                        padRight,
+                                        padBottom
+                                    ),
+                                    550
+                                )
                             }
-                            val padH = with(density) { 48.dp.roundToPx() }
-                            val padTop = with(density) { 120.dp.roundToPx() }
-                            val padBottom = with(density) { 180.dp.roundToPx() }
-                            map.animateCamera(
-                                CameraUpdateFactory.newLatLngBounds(
-                                    builder.build(),
-                                    leftPanelInsetPx + padH,
-                                    padTop,
-                                    padH,
-                                    padBottom
-                                ),
-                                550
-                            )
+                        }
+
+                        MapCameraMode.FOLLOW_PUCK -> {
+                            val target = animatedPuck?.position ?: cam.center
+                            val safeLeft = leftPanelInsetPx.toDouble().coerceIn(0.0, widthPx * 0.5)
+                            val nextPos = CameraPosition.Builder()
+                                .target(org.maplibre.android.geometry.LatLng(target.latitude, target.longitude))
+                                .zoom(cam.zoom)
+                                .bearing(cam.bearingDegrees)
+                                .tilt(cam.tiltDegrees.coerceIn(0.0, 45.0))
+                                .padding(safeLeft, 0.0, 0.0, 0.0)
+                                .build()
+                            val existing = map.cameraPosition
+                            val distChange = existing.target?.let {
+                                GeoMath.haversineMeters(LatLng(it.latitude, it.longitude), target)
+                            } ?: Double.MAX_VALUE
+                            if (distChange > 2.0 || abs(existing.zoom - cam.zoom) > 0.05 ||
+                                abs(existing.tilt - nextPos.tilt) > 0.5
+                            ) {
+                                map.easeCamera(CameraUpdateFactory.newCameraPosition(nextPos), 350)
+                            }
+                        }
+
+                        MapCameraMode.NAVIGATION_25D -> {
+                            val target = animatedPuck?.position ?: cam.center
+                            val heading = animatedPuck?.bearingDegrees?.toDouble() ?: cam.bearingDegrees
+                            // Place target puck cleanly inside the lower third (~68% y) of the visible map canvas
+                            val topBiasPadding = heightPx * 0.48
+                            val bottomMarginPadding = heightPx * 0.12
+                            val safeLeft = leftPanelInsetPx.toDouble().coerceIn(0.0, widthPx * 0.5)
+                            val clampedTilt = cam.tiltDegrees.coerceIn(45.0, 60.0)
+                            val nextPos = CameraPosition.Builder()
+                                .target(org.maplibre.android.geometry.LatLng(target.latitude, target.longitude))
+                                .zoom(cam.zoom)
+                                .bearing(heading)
+                                .tilt(clampedTilt)
+                                .padding(safeLeft, topBiasPadding, 0.0, bottomMarginPadding)
+                                .build()
+                            map.moveCamera(CameraUpdateFactory.newCameraPosition(nextPos))
                         }
                     }
-
-                    MapCameraMode.FOLLOW_PUCK -> {
-                        val target = animatedPuck?.position ?: cam.center
-                        val nextPos = CameraPosition.Builder()
-                            .target(org.maplibre.android.geometry.LatLng(target.latitude, target.longitude))
-                            .zoom(cam.zoom)
-                            .bearing(cam.bearingDegrees)
-                            .tilt(cam.tiltDegrees.coerceIn(0.0, 45.0))
-                            .padding(leftPanelInsetPx.toDouble(), 0.0, 0.0, 0.0)
-                            .build()
-                        val existing = map.cameraPosition
-                        val distChange = existing.target?.let {
-                            GeoMath.haversineMeters(LatLng(it.latitude, it.longitude), target)
-                        } ?: Double.MAX_VALUE
-                        if (distChange > 2.0 || abs(existing.zoom - cam.zoom) > 0.05) {
-                            map.easeCamera(CameraUpdateFactory.newCameraPosition(nextPos), 350)
-                        }
-                    }
-
-                    MapCameraMode.NAVIGATION_25D -> {
-                        val target = animatedPuck?.position ?: cam.center
-                        val heading = animatedPuck?.bearingDegrees?.toDouble() ?: cam.bearingDegrees
-                        // Place target puck cleanly inside the lower third (~68% y) of the visible map canvas
-                        val topBiasPadding = heightPx * 0.48
-                        val bottomMarginPadding = heightPx * 0.12
-                        val clampedTilt = cam.tiltDegrees.coerceIn(45.0, 60.0)
-                        val nextPos = CameraPosition.Builder()
-                            .target(org.maplibre.android.geometry.LatLng(target.latitude, target.longitude))
-                            .zoom(cam.zoom)
-                            .bearing(heading)
-                            .tilt(clampedTilt)
-                            .padding(leftPanelInsetPx.toDouble(), topBiasPadding, 0.0, bottomMarginPadding)
-                            .build()
-                        map.moveCamera(CameraUpdateFactory.newCameraPosition(nextPos))
-                    }
+                }.onFailure { err ->
+                    Log.w("HalaTujuMap", "Camera update skipped", err)
                 }
-                @Suppress("UNUSED_EXPRESSION")
-                widthPx
             }
         }
 

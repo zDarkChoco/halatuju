@@ -566,7 +566,7 @@ fun HalaTujuHomeMapShell(
             maxWidth >= 760.dp -> 356.dp
             else -> 296.dp
         }
-        val maxListHeight = if (isCompactHeight || maxHeight < 520.dp) 180.dp else 320.dp
+        val baseMaxListHeight = if (isCompactHeight || maxHeight < 520.dp) 180.dp else 320.dp
         val showRoutePreview = searchState.isRoutePreviewVisible && searchState.routePreview.hasContent
         val density = LocalDensity.current
         val isLargeFontScale = density.fontScale >= 1.55f
@@ -595,6 +595,7 @@ fun HalaTujuHomeMapShell(
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
             val safeInnerMaxHeight = maxHeight
+            val maxListHeight = (safeInnerMaxHeight - 220.dp).coerceIn(110.dp, baseMaxListHeight)
             val utilityTopPadding = if (isWide) {
                 12.dp
             } else if (portraitSearchCardHeightPx > 0) {

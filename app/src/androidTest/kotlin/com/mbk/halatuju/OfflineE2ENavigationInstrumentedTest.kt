@@ -2,19 +2,25 @@ package com.mbk.halatuju
 
 import android.app.NotificationManager
 import android.os.Build
+import android.util.Log
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isEnabled
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.printToLog
 import androidx.core.app.NotificationCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -111,7 +117,8 @@ class OfflineE2ENavigationInstrumentedTest {
         mockWebServer = MockWebServer()
         mockWebServer.dispatcher = OfflineMockDispatcher()
         mockWebServer.start(InetAddress.getByName("127.0.0.1"), 0)
-        val baseUrl = mockWebServer.url("/").toString().trimEnd('/')
+        val baseUrl = "http://127.0.0.1:${mockWebServer.port}"
+        Log.i("HalaTujuE2ETest", "MockWebServer started at $baseUrl")
 
         runBlocking {
             sessionManager.endNavigation()
@@ -187,116 +194,147 @@ class OfflineE2ENavigationInstrumentedTest {
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         CiArtifactCapture.prepareDir(device)
 
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
-        composeRule.onNodeWithTag("home_search_card").assertIsDisplayed()
+        try {
+            composeRule.waitForIdle()
+            composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
+            composeRule.onNodeWithTag("home_search_card").assertIsDisplayed()
 
-        // 1. Search destination via local mock Photon server (debounced 300ms)
-        composeRule.onNodeWithTag("search_to_input").performClick()
-        composeRule.onNodeWithTag("search_to_input").performTextInput("KLIA")
+            // 1. Search destination via local mock Photon server (debounced 300ms)
+            focusAndTypeSearchQuery(tag = "search_to_input", query = "KLIA")
 
-        composeRule.waitUntil(timeoutMillis = 8_000L) {
-            composeRule.onAllNodesWithText("KLIA Terminal 1").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onAllNodesWithText("KLIA Terminal 1").onFirst().performClick()
-
-        // 2. Verify multi-alternative route preview + estimated traffic badge
-        composeRule.waitUntil(timeoutMillis = 8_000L) {
-            composeRule.onAllNodesWithTag("route_preview_sheet").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag("alternative_routes_strip").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodes(hasTestTag("start_navigation_button") and isEnabled())
-                    .fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag("route_traffic_label").assertIsDisplayed()
-        CiArtifactCapture.captureScreenshot(device, "ci_03_e2e_route_preview.png")
-
-        // 3. Add intermediate stop ("KL Sentral") and trigger automatic multi-leg reroute
-        composeRule.onNodeWithTag("add_stop_button").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000L) {
-            composeRule.onAllNodesWithTag("search_stop_input").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag("search_stop_input").performTextInput("Sentral")
-        composeRule.waitUntil(timeoutMillis = 8_000L) {
-            composeRule.onAllNodesWithText("KL Sentral").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onAllNodesWithText("KL Sentral").onFirst().performClick()
-
-        composeRule.waitUntil(timeoutMillis = 8_000L) {
-            routeRequestCount.get() >= 2 &&
-                composeRule.onAllNodesWithTag("intermediate_stops_section").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag("alternative_routes_strip").fetchSemanticsNodes().isEmpty() &&
-                sessionManager.state.value.status == NavigationStatus.IDLE &&
-                composeRule.onAllNodesWithText("1 stop").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodes(hasTestTag("start_navigation_button") and isEnabled())
-                    .fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag("start_navigation_button").assertIsEnabled().performClick()
-
-        // 4. Verify active turn-by-turn UI, lane guidance, speed badge, debug overlay & OS notification
-        composeRule.waitUntil(timeoutMillis = 10_000L) {
-            composeRule.onAllNodesWithTag("active_navigation_screen").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag("nav_lane_guidance_strip").fetchSemanticsNodes().isNotEmpty() &&
-                composeRule.onAllNodesWithTag("nav_speed_limit_badge").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithTag("nav_maneuver_banner").assertIsDisplayed()
-        composeRule.onNodeWithTag("nav_end_button").assertIsDisplayed()
-        composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
-
-        val activeNotif = waitUntilNotNull(timeoutMs = 10_000L) {
-            notificationManager.activeNotifications.firstOrNull {
-                it.id == NavigationNotificationFactory.NOTIFICATION_ID
+            composeRule.waitUntil(timeoutMillis = 8_000L) {
+                composeRule.onAllNodesWithText("KLIA Terminal 1").fetchSemanticsNodes().isNotEmpty()
             }
-        }
-        assertNotNull("Expected active navigation OS notification during simulated drive", activeNotif)
-        if (Build.VERSION.SDK_INT >= 36) {
-            assertTrue(NotificationCompat.isRequestPromotedOngoing(activeNotif!!.notification))
-        }
-        CiArtifactCapture.captureScreenshot(device, "ci_04_e2e_active_nav.png")
+            composeRule.onAllNodesWithText("KLIA Terminal 1").onFirst().performClick()
 
-        // 5. Wait for simulated arrival at intermediate Stop 1 and continue to Leg 2
-        composeRule.waitUntil(timeoutMillis = 25_000L) {
-            composeRule.onAllNodesWithTag("nav_stop_arrival_card").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithText("Arrived at stop 1").assertIsDisplayed()
-        CiArtifactCapture.captureScreenshot(device, "ci_05_e2e_stop_arrival.png")
-        composeRule.onNodeWithTag("nav_continue_stop_button").performClick()
+            // 2. Verify multi-alternative route preview + estimated traffic badge
+            composeRule.waitUntil(timeoutMillis = 8_000L) {
+                composeRule.onAllNodesWithTag("route_preview_sheet").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag("alternative_routes_strip").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodes(hasTestTag("start_navigation_button") and isEnabled())
+                        .fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("route_traffic_label").assertIsDisplayed()
+            composeRule.waitForIdle()
+            CiArtifactCapture.captureScreenshot(device, "ci_03_e2e_route_preview.png")
 
-        composeRule.waitUntil(timeoutMillis = 8_000L) {
-            sessionManager.state.value.status == NavigationStatus.ACTIVE &&
-                sessionManager.state.value.currentLegIndex == 1 &&
-                composeRule.onAllNodesWithTag("debug_inject_offroute_button").fetchSemanticsNodes().isNotEmpty()
-        }
+            // 3. Add intermediate stop ("KL Sentral") and trigger automatic multi-leg reroute
+            composeRule.onNodeWithTag("add_stop_button").performClick()
+            focusAndTypeSearchQuery(tag = "search_stop_input", query = "Sentral", alreadyFocusedClick = false)
+            composeRule.waitUntil(timeoutMillis = 8_000L) {
+                composeRule.onAllNodesWithText("KL Sentral").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onAllNodesWithText("KL Sentral").onFirst().performClick()
 
-        // 6. Trigger real off-route detour button on Debug Overlay -> wait for reroute call with heading
-        val offrouteButton = composeRule.onNodeWithTag("debug_inject_offroute_button")
-        runCatching { offrouteButton.performScrollTo() }
-        offrouteButton.performClick()
-        composeRule.waitUntil(timeoutMillis = 22_000L) {
-            rerouteRequestCount.get() >= 1 &&
-                sawHeadingOnReroute.get() &&
-                sessionManager.state.value.route?.legs?.size == 1 &&
-                !sessionManager.state.value.isRerouting
-        }
-        composeRule.waitForIdle()
-        CiArtifactCapture.captureScreenshot(device, "ci_06_e2e_post_reroute.png")
+            composeRule.waitUntil(timeoutMillis = 8_000L) {
+                routeRequestCount.get() >= 2 &&
+                    composeRule.onAllNodesWithTag("intermediate_stops_section").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag("alternative_routes_strip").fetchSemanticsNodes().isEmpty() &&
+                    sessionManager.state.value.status == NavigationStatus.IDLE &&
+                    composeRule.onAllNodesWithText("1 stop").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodes(hasTestTag("start_navigation_button") and isEnabled())
+                        .fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithTag("start_navigation_button").assertIsEnabled().performClick()
 
-        // 7. Wait for arrival at final destination ("You have arrived") -> tap Done -> clean IDLE
-        composeRule.waitUntil(timeoutMillis = 45_000L) {
-            composeRule.onAllNodesWithTag("nav_destination_arrival_card").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithText("You have arrived").assertIsDisplayed()
-        CiArtifactCapture.captureScreenshot(device, "ci_07_e2e_dest_arrival.png")
-        composeRule.onNodeWithTag("nav_done_button").performClick()
+            // 4. Verify active turn-by-turn UI, lane guidance, speed badge, debug overlay & OS notification
+            composeRule.waitUntil(timeoutMillis = 10_000L) {
+                composeRule.onAllNodesWithTag("active_navigation_screen").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag("nav_lane_guidance_strip").fetchSemanticsNodes().isNotEmpty() &&
+                    composeRule.onAllNodesWithTag("nav_speed_limit_badge").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("nav_maneuver_banner").assertIsDisplayed()
+            composeRule.onNodeWithTag("nav_end_button").assertIsDisplayed()
+            composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
 
-        val endedCleanly = waitUntil(timeoutMs = 8_000L) {
-            sessionManager.state.value.status == NavigationStatus.IDLE &&
-                notificationManager.activeNotifications.none {
+            val activeNotif = waitUntilNotNull(timeoutMs = 10_000L) {
+                notificationManager.activeNotifications.firstOrNull {
                     it.id == NavigationNotificationFactory.NOTIFICATION_ID
                 }
+            }
+            assertNotNull("Expected active navigation OS notification during simulated drive", activeNotif)
+            if (Build.VERSION.SDK_INT >= 36) {
+                assertTrue(NotificationCompat.isRequestPromotedOngoing(activeNotif!!.notification))
+            }
+            CiArtifactCapture.captureScreenshot(device, "ci_04_e2e_active_nav.png")
+
+            // 5. Wait for simulated arrival at intermediate Stop 1 and continue to Leg 2
+            composeRule.waitUntil(timeoutMillis = 25_000L) {
+                composeRule.onAllNodesWithTag("nav_stop_arrival_card").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithText("Arrived at stop 1").assertIsDisplayed()
+            CiArtifactCapture.captureScreenshot(device, "ci_05_e2e_stop_arrival.png")
+            composeRule.onNodeWithTag("nav_continue_stop_button").performClick()
+
+            composeRule.waitUntil(timeoutMillis = 8_000L) {
+                sessionManager.state.value.status == NavigationStatus.ACTIVE &&
+                    sessionManager.state.value.currentLegIndex == 1 &&
+                    composeRule.onAllNodesWithTag("debug_inject_offroute_button").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // 6. Trigger real off-route detour button on Debug Overlay -> wait for reroute call with heading
+            val offrouteButton = composeRule.onNodeWithTag("debug_inject_offroute_button")
+            runCatching { offrouteButton.performScrollTo() }
+            offrouteButton.performClick()
+            composeRule.waitUntil(timeoutMillis = 22_000L) {
+                rerouteRequestCount.get() >= 1 &&
+                    sawHeadingOnReroute.get() &&
+                    sessionManager.state.value.route?.legs?.size == 1 &&
+                    !sessionManager.state.value.isRerouting
+            }
+            composeRule.waitForIdle()
+            CiArtifactCapture.captureScreenshot(device, "ci_06_e2e_post_reroute.png")
+
+            // 7. Wait for arrival at final destination ("You have arrived") -> tap Done -> clean IDLE
+            composeRule.waitUntil(timeoutMillis = 45_000L) {
+                composeRule.onAllNodesWithTag("nav_destination_arrival_card").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithText("You have arrived").assertIsDisplayed()
+            CiArtifactCapture.captureScreenshot(device, "ci_07_e2e_dest_arrival.png")
+            composeRule.onNodeWithTag("nav_done_button").performClick()
+
+            val endedCleanly = waitUntil(timeoutMs = 8_000L) {
+                sessionManager.state.value.status == NavigationStatus.IDLE &&
+                    notificationManager.activeNotifications.none {
+                        it.id == NavigationNotificationFactory.NOTIFICATION_ID
+                    }
+            }
+            assertTrue("Expected Done button to return navigation to IDLE and clear notification", endedCleanly)
+            composeRule.waitUntil(timeoutMillis = 5_000L) {
+                composeRule.onAllNodesWithTag("home_search_card").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (t: Throwable) {
+            CiArtifactCapture.captureScreenshot(device, "ci_e2e_failure.png")
+            runCatching { composeRule.onRoot(useUnmergedTree = true).printToLog("E2E_FAILURE_TREE") }
+            throw t
         }
-        assertTrue("Expected Done button to return navigation to IDLE and clear notification", endedCleanly)
+    }
+
+    private fun focusAndTypeSearchQuery(
+        tag: String,
+        query: String,
+        alreadyFocusedClick: Boolean = true
+    ) {
+        if (alreadyFocusedClick) {
+            composeRule.onNodeWithTag(tag).performClick()
+        }
         composeRule.waitUntil(timeoutMillis = 5_000L) {
-            composeRule.onAllNodesWithTag("home_search_card").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("search_focused_panel").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()
+        }
+        if (composeRule.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag(tag).performClick()
+            composeRule.waitUntil(timeoutMillis = 3_000L) {
+                composeRule.onAllNodes(hasTestTag(tag) and isFocused()).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(tag).performTextInput(query)
+        composeRule.waitForIdle()
+        if (composeRule.onAllNodes(hasTestTag(tag) and hasText(query)).fetchSemanticsNodes().isEmpty()) {
+            composeRule.onNodeWithTag(tag).performTextReplacement(query)
+            composeRule.waitForIdle()
         }
     }
 
@@ -321,6 +359,7 @@ class OfflineE2ENavigationInstrumentedTest {
     private inner class OfflineMockDispatcher : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse {
             val path = request.requestUrl?.encodedPath.orEmpty()
+            Log.i("HalaTujuE2EMock", "${request.method} ${request.requestUrl}")
             return when {
                 path.endsWith("/style.json") -> jsonResponse(minimalOfflineStyleJson())
                 path.endsWith("/tiles.json") -> jsonResponse(minimalTileJson())

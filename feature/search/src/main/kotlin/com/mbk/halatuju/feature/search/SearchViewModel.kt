@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.mbk.halatuju.core.geocoding.Geocoder
 import com.mbk.halatuju.core.geocoding.SearchDebouncer
 import com.mbk.halatuju.core.location.LocationSourceCoordinator
-import com.mbk.halatuju.core.model.AppSettings
 import com.mbk.halatuju.core.model.FavoriteKind
 import com.mbk.halatuju.core.model.GeoMath
 import com.mbk.halatuju.core.model.KlDefaults
@@ -24,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -90,7 +90,6 @@ class SearchViewModel internal constructor(
     private val draft = MutableStateFlow(DraftSearchState())
     private val rawQueryFlow = MutableStateFlow("")
     private val routeRefreshTrigger = MutableStateFlow(0)
-    private var latestSettings: AppSettings = AppSettings()
     private var myLocationRouteAnchor: LatLng? = null
 
     val uiState: StateFlow<SearchUiState> = combine(
@@ -100,7 +99,6 @@ class SearchViewModel internal constructor(
         locationSourceCoordinator.latestFix,
         settingsStore.settings
     ) { d, recents, favorites, latestFix, settings ->
-        latestSettings = settings
         SearchUiState(
             fromEndpoint = d.fromEndpoint,
             toEndpoint = d.toEndpoint,
@@ -148,7 +146,7 @@ class SearchViewModel internal constructor(
 
                     draft.update { it.copy(isSearching = true, searchError = null) }
                     val bias = locationSourceCoordinator.latestFix.value?.position ?: KlDefaults.KLCC
-                    val photonUrl = latestSettings.endpoints.photonBaseUrl
+                    val photonUrl = settingsStore.settings.first().endpoints.photonBaseUrl
                     val result = geocoder.search(
                         query = trimmed,
                         bias = bias,
@@ -646,9 +644,10 @@ class SearchViewModel internal constructor(
             )
         }
         viewModelScope.launch {
+            val nominatimUrl = settingsStore.settings.first().endpoints.nominatimBaseUrl
             val result = geocoder.reverse(
                 location = location,
-                baseUrlOverride = latestSettings.endpoints.nominatimBaseUrl
+                baseUrlOverride = nominatimUrl
             )
             draft.update { current ->
                 val pin = current.droppedPin
