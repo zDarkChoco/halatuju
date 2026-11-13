@@ -1,11 +1,13 @@
 package com.mbk.halatuju.feature.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -123,3 +125,63 @@ class SettingsAboutScreenshotTest {
         composeRule.onRoot().captureRoboImage("../../docs/screenshots/m7_endpoints_dialog_light.png")
     }
 }
+
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [36], qualifiers = "w360dp-h640dp-port-xxhdpi")
+class FontScaleSettingsScreenshotTest {
+
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun m8FontScale200SettingsAndEndpointsDialogLight() {
+        composeRule.setContent {
+            val base = androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                    density = base.density,
+                    fontScale = 2.0f
+                )
+            ) {
+                HalaTujuTheme(themeMode = ThemeMode.LIGHT) {
+                    SettingsScreen(
+                        settings = AppSettings(themeMode = ThemeMode.LIGHT, simulationEnabled = true),
+                        gpxRecordingState = GpxRecordingState(isRecording = true, recordedFixCount = 12),
+                        gpxReplayState = GpxReplayState(isActive = true, trackName = "kl_drive.gpx", pointCount = 48),
+                        onThemeModeChange = {},
+                        onUnitSystemChange = {},
+                        onVoiceEnabledChange = {},
+                        onAvoidancesChange = {},
+                        onDeveloperDebugOverlayChange = {},
+                        onOpenAboutLicenses = {},
+                        onBack = {}
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("settings_list").performScrollToNode(hasTestTag("settings_simulation_card"))
+        composeRule.onNodeWithTag("gpx_export_button").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("gpx_replay_stop_button").performScrollTo().assertIsDisplayed()
+
+        composeRule.onNodeWithTag("settings_list").performScrollToNode(hasTestTag("settings_endpoints_card"))
+        composeRule.onNodeWithTag("configure_endpoints_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("endpoints_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("endpoints_reset_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("endpoints_save_button").assertIsDisplayed()
+
+        listOf("endpoints_reset_button", "endpoints_save_button").forEach { tag ->
+            val bounds = composeRule.onNodeWithTag(tag).getBoundsInRoot()
+            org.junit.Assert.assertTrue(
+                "Expected $tag height >= 48dp at 200% font scale (was ${bounds.bottom.value - bounds.top.value})",
+                (bounds.bottom.value - bounds.top.value) >= 47.9f
+            )
+        }
+
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m8_font200_settings_dialog_light.png")
+    }
+}
+

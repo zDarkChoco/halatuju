@@ -63,10 +63,12 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -304,7 +306,7 @@ private fun SearchEndpointRow(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .padding(vertical = 6.dp),
+                .padding(top = 6.dp, bottom = 6.dp, end = 6.dp),
             contentAlignment = Alignment.CenterStart
         ) {
             if (value.isEmpty()) {
@@ -344,7 +346,7 @@ private fun SearchEndpointRow(
             IconButton(
                 onClick = onClearClick,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(48.dp)
                     .testTag(clearTestTag)
                     .semantics { contentDescription = "Clear $label" }
             ) {
@@ -513,7 +515,10 @@ private fun SearchFocusedPanel(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.error
                                 )
-                                TextButton(onClick = onRetrySearch) {
+                                TextButton(
+                                    onClick = onRetrySearch,
+                                    modifier = Modifier.heightIn(min = 48.dp)
+                                ) {
                                     Text("Retry")
                                 }
                             }
@@ -578,9 +583,13 @@ private fun SearchFocusedPanel(
                                     Text(
                                         text = "Recents",
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.semantics { heading() }
                                     )
-                                    TextButton(onClick = onClearRecents) {
+                                    TextButton(
+                                        onClick = onClearRecents,
+                                        modifier = Modifier.heightIn(min = 48.dp)
+                                    ) {
                                         Text("Clear")
                                     }
                                 }
@@ -619,7 +628,9 @@ private fun SectionHeaderRow(title: String) {
         text = title,
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 4.dp)
+        modifier = Modifier
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 4.dp)
+            .semantics { heading() }
     )
 }
 
@@ -633,6 +644,7 @@ private fun PlaceRow(
     onClick: () -> Unit,
     onToggleSave: () -> Unit
 ) {
+    val isLargeFont = LocalDensity.current.fontScale >= 1.5f
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -652,7 +664,7 @@ private fun PlaceRow(
             Text(
                 text = place.name,
                 style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
+                maxLines = if (isLargeFont) 2 else 1,
                 overflow = TextOverflow.Ellipsis
             )
             if (place.subtitle.isNotBlank()) {
@@ -660,7 +672,7 @@ private fun PlaceRow(
                     text = place.subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = if (isLargeFont) 2 else 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -675,7 +687,7 @@ private fun PlaceRow(
         IconButton(
             onClick = onToggleSave,
             modifier = Modifier
-                .size(44.dp)
+                .size(48.dp)
                 .semantics {
                     contentDescription = if (isSaved) "Remove ${place.name} from favorites" else "Save ${place.name} to favorites"
                 }

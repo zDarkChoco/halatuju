@@ -75,11 +75,11 @@ class SimulatedLocationSource(
     }
 
     fun injectOffRouteDetour(
-        durationMs: Long = 9_000L,
-        lateralOffsetMeters: Double = 55.0
+        durationMs: Long = 15_000L,
+        lateralOffsetMeters: Double = 80.0
     ) {
         offRouteLateralMeters = lateralOffsetMeters
-        offRouteDetourUntilElapsedMs = elapsedClockMs() + durationMs.coerceIn(5_000L, 20_000L)
+        offRouteDetourUntilElapsedMs = elapsedClockMs() + durationMs.coerceIn(5_000L, 25_000L)
     }
 
     fun clearInjectedFaults() {
@@ -91,6 +91,9 @@ class SimulatedLocationSource(
     override fun observeLocations(minIntervalMs: Long): Flow<LocationFix> = flow {
         val stepIntervalMs = minIntervalMs.coerceIn(250L, 1_000L).coerceAtMost(tickIntervalMs)
         var trackedRouteId: String? = null
+        var trackedRouteStart: LatLng? = null
+        var trackedRouteEnd: LatLng? = null
+        var trackedLegsCount: Int = -1
         var distanceAlongRoute = 0.0
         var lastTickElapsedMs = elapsedClockMs()
 
@@ -113,8 +116,17 @@ class SimulatedLocationSource(
             )
 
             if (route != null && route.geometry.size >= 2 && !snapshot.isFinished) {
-                if (route.id != trackedRouteId) {
+                val routeStart = route.geometry.firstOrNull()
+                val routeEnd = route.geometry.lastOrNull()
+                if (route.id != trackedRouteId ||
+                    routeStart != trackedRouteStart ||
+                    routeEnd != trackedRouteEnd ||
+                    route.legs.size != trackedLegsCount
+                ) {
                     trackedRouteId = route.id
+                    trackedRouteStart = routeStart
+                    trackedRouteEnd = routeEnd
+                    trackedLegsCount = route.legs.size
                     distanceAlongRoute = 0.0
                 }
 
@@ -337,7 +349,7 @@ class RouteSimulationController @Inject constructor(
         simulatedSource.injectTunnelBlackout(durationMs)
     }
 
-    fun injectOffRouteDetour(durationMs: Long = 9_000L, lateralOffsetMeters: Double = 55.0) {
+    fun injectOffRouteDetour(durationMs: Long = 15_000L, lateralOffsetMeters: Double = 80.0) {
         simulatedSource.injectOffRouteDetour(durationMs, lateralOffsetMeters)
     }
 

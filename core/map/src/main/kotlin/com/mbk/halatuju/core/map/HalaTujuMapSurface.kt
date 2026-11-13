@@ -44,6 +44,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -364,10 +365,13 @@ fun HalaTujuMapSurface(
         }
 
         // Permanent always-visible OpenStreetMap attribution chip
+        val attributionScale = density.fontScale.coerceIn(1.0f, 1.25f)
+        val attributionFontSize = with(density) { (11f * attributionScale).dp.toSp() }
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(attributionPadding)
+                .padding(end = 68.dp)
                 .testTag("osm_attribution")
                 .semantics {
                     contentDescription = "Map data attribution: OpenStreetMap contributors. Tap for licenses."
@@ -384,7 +388,8 @@ fun HalaTujuMapSurface(
             Text(
                 text = "© OpenStreetMap contributors",
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = attributionFontSize),
+                maxLines = 1,
                 color = if (state.isDarkTheme) {
                     Color(0xFFE4EAE9)
                 } else {

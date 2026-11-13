@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -634,3 +635,215 @@ class KeepScreenOnWakeLockTest {
         }
     }
 }
+
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [36], application = Application::class, qualifiers = "w360dp-h640dp-port-xxhdpi")
+class MultiDeviceNavigationScreenshotTest {
+
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    private val klZone = ZoneId.of("Asia/Kuala_Lumpur")
+
+    private fun navUiState(themeMode: ThemeMode, withDebug: Boolean = false): ActiveNavigationUiState {
+        val pts = listOf(
+            LatLng(3.1579, 101.7116),
+            LatLng(3.1120, 101.7010),
+            LatLng(3.0450, 101.6890),
+            LatLng(2.9180, 101.6820),
+            KlDefaults.KLIA
+        )
+        val puckPos = pts[2]
+        val route = NavRoute(
+            id = "nav_m8",
+            geometry = pts,
+            cumulativeDistancesMeters = listOf(0.0, 5_500.0, 13_500.0, 29_000.0, 54_200.0),
+            totalDistanceMeters = 54_200.0,
+            baseDurationSeconds = 2_700.0,
+            adjustedDurationSeconds = 3_120.0,
+            trafficEstimated = true,
+            trafficDelayFactor = 1.15,
+            trafficLabel = "estimated · evening peak",
+            legs = emptyList(),
+            waypoints = listOf(
+                Place("p1", "KLCC", "Kuala Lumpur", pts.first()),
+                Place("p2", "KLIA Terminal 1", "Sepang", pts.last())
+            ),
+            summaryLabel = "MEX / E20 → E6"
+        )
+        return ActiveNavigationUiState(
+            session = NavigationSessionState(
+                status = NavigationStatus.ACTIVE,
+                route = route,
+                distanceAlongRouteMeters = 13_500.0,
+                remainingDistanceMeters = 40_700.0,
+                remainingDurationSeconds = 2_340.0,
+                estimatedArrivalEpochMs = 1_778_583_540_000L,
+                etaTrafficLabel = "estimated · evening peak",
+                progressFraction = 0.25f,
+                cameraMode = MapCameraMode.NAVIGATION_25D,
+                cameraState = MapCameraState(
+                    mode = MapCameraMode.NAVIGATION_25D,
+                    center = puckPos,
+                    zoom = 15.8,
+                    bearingDegrees = 185.0,
+                    tiltDegrees = 52.0
+                ),
+                puckState = PuckRenderState(position = puckPos, bearingDegrees = 185f, accuracyMeters = 7f),
+                banner = GuidanceBannerState(
+                    maneuverType = ManeuverType.OFF_RAMP,
+                    maneuverModifier = ManeuverModifier.SLIGHT_LEFT,
+                    distanceToManeuverMeters = 280.0,
+                    primaryText = "Susur Keluar KLIA / Nilai",
+                    secondaryDestinations = "KLIA Terminal 1 / Putrajaya",
+                    exitShieldText = "608",
+                    lanes = listOf(
+                        LaneInfo(listOf(LaneIndication.SHARP_LEFT, LaneIndication.SLIGHT_LEFT), valid = true),
+                        LaneInfo(listOf(LaneIndication.STRAIGHT, LaneIndication.SLIGHT_LEFT), valid = true),
+                        LaneInfo(listOf(LaneIndication.STRAIGHT), valid = false),
+                        LaneInfo(listOf(LaneIndication.STRAIGHT, LaneIndication.RIGHT), valid = false)
+                    ),
+                    thenStep = SecondaryManeuverPreview(
+                        maneuverType = ManeuverType.ROUNDABOUT,
+                        maneuverModifier = ManeuverModifier.RIGHT,
+                        roadName = "Bulatan KLIA"
+                    )
+                ),
+                overspeed = OverspeedState(
+                    currentSpeedKmh = 98,
+                    speedLimit = SegmentSpeedLimit(speedKmh = 110, isExplicitNone = false, isUnknown = false),
+                    isOverspeeding = false
+                ),
+                debugOverlayData = DebugOverlayData(
+                    rawFix = LocationFix(
+                        position = LatLng(3.04515, 101.68930),
+                        accuracyMeters = 11f,
+                        speedMps = 27.2f,
+                        bearingDegrees = 184f,
+                        timestampMs = 2_000L,
+                        provider = LocationProviderKind.SIMULATED
+                    ),
+                    kalmanPosition = LatLng(3.04507, 101.68914),
+                    snappedPosition = puckPos,
+                    crossTrackErrorMeters = 4.8,
+                    headingDeltaDegrees = 2.1,
+                    isOffRoute = false,
+                    targetZoom = 15.8
+                )
+            ),
+            settings = AppSettings(
+                themeMode = themeMode,
+                simulationEnabled = withDebug,
+                developerDebugOverlayEnabled = withDebug
+            )
+        )
+    }
+
+    private fun renderNav(themeMode: ThemeMode, fontScale: Float = 1.0f, withDebug: Boolean = false) {
+        val tileSource = OpenFreeMapTileSource(RuntimeEnvironment.getApplication())
+        val isDark = themeMode == ThemeMode.DARK
+        composeRule.setContent {
+            val base = androidx.compose.ui.platform.LocalDensity.current
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                    density = base.density,
+                    fontScale = fontScale
+                )
+            ) {
+                HalaTujuTheme(themeMode = themeMode) {
+                    ActiveNavigationScreen(
+                        uiState = navUiState(themeMode, withDebug),
+                        tileSource = tileSource,
+                        isDarkTheme = isDark,
+                        onUserPanMap = {},
+                        onToggleOverview = {},
+                        onRecenterClick = {},
+                        onToggleMute = {},
+                        onContinueToNextStop = {},
+                        onEndNavigation = {},
+                        onOpenAbout = {},
+                        clockZoneId = klZone
+                    )
+                }
+            }
+        }
+    }
+
+    private fun assertNavNonOverlappingAndAccessible() {
+        composeRule.onNodeWithTag("nav_maneuver_banner").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_lane_guidance_strip").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_bottom_bar").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_speed_cluster").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_end_button").assertIsDisplayed()
+        composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
+
+        val bannerBounds = composeRule.onNodeWithTag("nav_maneuver_banner").getBoundsInRoot()
+        val laneBounds = composeRule.onNodeWithTag("nav_lane_guidance_strip").getBoundsInRoot()
+        val bottomBounds = composeRule.onNodeWithTag("nav_bottom_bar").getBoundsInRoot()
+        val speedBounds = composeRule.onNodeWithTag("nav_speed_cluster").getBoundsInRoot()
+
+        fun noOverlap(a: androidx.compose.ui.unit.DpRect, b: androidx.compose.ui.unit.DpRect): Boolean {
+            return a.right.value <= b.left.value + 0.5f ||
+                b.right.value <= a.left.value + 0.5f ||
+                a.bottom.value <= b.top.value + 0.5f ||
+                b.bottom.value <= a.top.value + 0.5f
+        }
+
+        assertTrue("Banner overlaps bottom bar ($bannerBounds vs $bottomBounds)", noOverlap(bannerBounds, bottomBounds))
+        assertTrue("Lanes overlap bottom bar ($laneBounds vs $bottomBounds)", noOverlap(laneBounds, bottomBounds))
+        assertTrue("Banner overlaps speed cluster ($bannerBounds vs $speedBounds)", noOverlap(bannerBounds, speedBounds))
+        assertTrue("Bottom bar overlaps speed cluster ($bottomBounds vs $speedBounds)", noOverlap(bottomBounds, speedBounds))
+
+        listOf("nav_mute_button", "nav_overview_button", "nav_end_button").forEach { tag ->
+            val bounds = composeRule.onNodeWithTag(tag).getBoundsInRoot()
+            assertTrue(
+                "Expected $tag width >= 48dp (was ${bounds.right.value - bounds.left.value})",
+                (bounds.right.value - bounds.left.value) >= 47.9f
+            )
+            assertTrue(
+                "Expected $tag height >= 48dp (was ${bounds.bottom.value - bounds.top.value})",
+                (bounds.bottom.value - bounds.top.value) >= 47.9f
+            )
+        }
+    }
+
+    @Test
+    fun m8Compact360NavigationLight() {
+        renderNav(ThemeMode.LIGHT)
+        assertNavNonOverlappingAndAccessible()
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m8_compact360_nav_light.png")
+    }
+
+    @Test
+    @Config(qualifiers = "w673dp-h841dp-port-xxhdpi")
+    fun m8FoldableNavigationDark() {
+        renderNav(ThemeMode.DARK, withDebug = true)
+        assertNavNonOverlappingAndAccessible()
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m8_foldable_nav_dark.png")
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-land-xxhdpi")
+    fun m8PhoneLandscapeNavigationDark() {
+        renderNav(ThemeMode.DARK, withDebug = true)
+        assertNavNonOverlappingAndAccessible()
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m8_landscape_nav_dark.png")
+    }
+
+    @Test
+    @Config(qualifiers = "w1024dp-h768dp-land-xhdpi")
+    fun m8TabletLandscapeNavigationLight() {
+        renderNav(ThemeMode.LIGHT, withDebug = true)
+        assertNavNonOverlappingAndAccessible()
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m8_tablet_nav_light.png")
+    }
+
+    @Test
+    fun m8FontScale200NavigationDark() {
+        renderNav(ThemeMode.DARK, fontScale = 2.0f, withDebug = false)
+        assertNavNonOverlappingAndAccessible()
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m8_font200_nav_dark.png")
+    }
+}
+

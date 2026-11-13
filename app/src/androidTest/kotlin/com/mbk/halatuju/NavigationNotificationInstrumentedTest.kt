@@ -2,7 +2,6 @@ package com.mbk.halatuju
 
 import android.app.Notification
 import android.app.NotificationManager
-import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.compose.ui.test.assertIsDisplayed
@@ -17,6 +16,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.core.app.NotificationCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
 import com.mbk.halatuju.core.model.KlDefaults
 import com.mbk.halatuju.core.model.ManeuverModifier
 import com.mbk.halatuju.core.model.ManeuverType
@@ -38,6 +38,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import javax.inject.Inject
 
 @HiltAndroidTest
@@ -75,7 +76,9 @@ class NavigationNotificationInstrumentedTest {
 
     @Test
     fun homeMapRendersAttributionSettingsAndForegroundServicePostsPlatformNotification() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
         val notificationManager = context.getSystemService(NotificationManager::class.java)
 
         composeRule.waitForIdle()
@@ -96,7 +99,7 @@ class NavigationNotificationInstrumentedTest {
 
         // Start active navigation through real NavigationSessionManager -> NavigationForegroundService
         val sampleRoute = buildKlSampleRoute()
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+        instrumentation.runOnMainSync {
             sessionManager.startNavigation(sampleRoute)
         }
 
@@ -107,7 +110,8 @@ class NavigationNotificationInstrumentedTest {
 
         assertEquals(Notification.CATEGORY_NAVIGATION, notification.category)
         assertTrue((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0)
-        assertTrue(notification.actions.orEmpty().any { it.title?.toString() == "End" })
+        val endAction = notification.actions.orEmpty().firstOrNull { it.title?.toString() == "End" }
+        assertNotNull("Expected End notification action", endAction)
 
         val channel = notificationManager.getNotificationChannel(NavigationNotificationFactory.CHANNEL_ID)
         assertNotNull(channel)
@@ -144,10 +148,21 @@ class NavigationNotificationInstrumentedTest {
             assertEquals(1_000, progressMax)
         }
 
-        // Trigger the exact End broadcast action from notification
-        context.sendBroadcast(
-            Intent(NavigationNotificationFactory.ACTION_END_NAVIGATION).setPackage(context.packageName)
-        )
+        // Capture live app & notification shade screenshots before ending navigation
+        val screenshotDir = context.getExternalFilesDir("ci_screenshots")?.apply { mkdirs() }
+        if (screenshotDir != null) {
+            device.takeScreenshot(File(screenshotDir, "ci_01_notif_active_nav.png"))
+            runCatching {
+                device.openNotification()
+                Thread.sleep(700L)
+                device.takeScreenshot(File(screenshotDir, "ci_02_notif_shade.png"))
+                device.pressBack()
+                Thread.sleep(300L)
+            }
+        }
+
+        // Trigger the exact PendingIntent attached to the notification's "End" action button
+        endAction!!.actionIntent.send()
 
         val cleared = waitUntil(timeoutMs = 8_000L) {
             sessionManager.state.value.status == NavigationStatus.IDLE &&

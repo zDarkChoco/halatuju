@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -47,6 +48,10 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowHeightSizeClass
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -59,11 +64,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -503,6 +510,7 @@ private fun queryDisplayName(context: Context, uri: Uri): String? {
     }.getOrNull()
 }
 
+@OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun HalaTujuHomeMapShell(
     mapState: MapRenderingState,
@@ -548,18 +556,30 @@ fun HalaTujuHomeMapShell(
     onStartNavigation: (NavRoute) -> Unit = {}
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val isWide = maxWidth >= 600.dp
-        val maxListHeight = if (maxHeight < 520.dp) 180.dp else 320.dp
+        val windowSizeClass = WindowSizeClass.calculateFromSize(DpSize(maxWidth, maxHeight))
+        val isCompactHeight = windowSizeClass.heightSizeClass == WindowHeightSizeClass.Compact
+        val isLandscape = maxWidth > maxHeight
+        val isWide = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact ||
+            (isLandscape && maxWidth >= 560.dp)
+        val leftRailWidth = when {
+            maxWidth >= 960.dp -> 396.dp
+            maxWidth >= 760.dp -> 356.dp
+            else -> 296.dp
+        }
+        val maxListHeight = if (isCompactHeight || maxHeight < 520.dp) 180.dp else 320.dp
         val showRoutePreview = searchState.isRoutePreviewVisible && searchState.routePreview.hasContent
         val density = LocalDensity.current
+        val isLargeFontScale = density.fontScale >= 1.55f
+        var portraitSearchCardHeightPx by remember { mutableIntStateOf(0) }
+        val wideLeftOffsetDp = if (isWide) leftRailWidth + 24.dp else 12.dp
         val wideLeftInsetPx = with(density) {
-            if (isWide) 410.dp.roundToPx() else 0
+            if (isWide) wideLeftOffsetDp.roundToPx() else 0
         }
 
         HalaTujuMapSurface(
             state = mapState,
             tileSource = tileSource,
-            attributionPadding = PaddingValues(start = 12.dp, bottom = 14.dp),
+            attributionPadding = PaddingValues(start = wideLeftOffsetDp, bottom = 14.dp),
             leftPanelInsetPx = wideLeftInsetPx,
             onUserPanMap = onUserPanMap,
             onMapLongClick = onMapLongClick,
@@ -569,18 +589,27 @@ fun HalaTujuHomeMapShell(
                 .testTag("home_map_surface")
         )
 
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
+            val safeInnerMaxHeight = maxHeight
+            val utilityTopPadding = if (isWide) {
+                12.dp
+            } else if (portraitSearchCardHeightPx > 0) {
+                with(density) { portraitSearchCardHeightPx.toDp() }
+            } else {
+                132.dp
+            }
+
             if (isWide) {
                 // Tablet / foldable / landscape left rail holds search + route preview without blocking map right pane
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(horizontal = 14.dp, vertical = 12.dp)
-                        .widthIn(max = 396.dp)
+                        .widthIn(max = leftRailWidth)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -612,7 +641,8 @@ fun HalaTujuHomeMapShell(
                             onRemoveStop = onRemoveStop,
                             onRetryRoute = onRetryRoute,
                             onStartNavigation = onStartNavigation,
-                            onDismissRoute = onDismissRoute
+                            onDismissRoute = onDismissRoute,
+                            scrollable = false
                         )
                     }
                 }
@@ -633,6 +663,7 @@ fun HalaTujuHomeMapShell(
                     maxListHeight = maxListHeight,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
+                        .onSizeChanged { portraitSearchCardHeightPx = it.height }
                         .padding(horizontal = 14.dp, vertical = 12.dp)
                         .widthIn(max = 420.dp)
                 )
@@ -644,7 +675,7 @@ fun HalaTujuHomeMapShell(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(
-                            top = if (isWide) 12.dp else 132.dp,
+                            top = utilityTopPadding,
                             end = 14.dp
                         ),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -708,12 +739,24 @@ fun HalaTujuHomeMapShell(
 
             if (!searchState.isFocused) {
                 val pinState = searchState.droppedPin
+                val bottomPaddingDp = 48.dp
+                // Utility buttons occupy 106dp below utilityTopPadding (48 + 10 + 48)
+                val bottomContainerMaxHeight = if (!isWide) {
+                    (safeInnerMaxHeight - utilityTopPadding - 114.dp - bottomPaddingDp).coerceAtLeast(180.dp)
+                } else {
+                    (safeInnerMaxHeight - bottomPaddingDp - 16.dp).coerceAtLeast(160.dp)
+                }
                 Column(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(start = 16.dp, end = 16.dp, bottom = 52.dp)
+                        .align(if (isWide) Alignment.BottomEnd else Alignment.BottomCenter)
+                        .padding(
+                            start = if (isWide) wideLeftOffsetDp else 16.dp,
+                            end = 16.dp,
+                            bottom = bottomPaddingDp
+                        )
                         .widthIn(max = 460.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .heightIn(max = bottomContainerMaxHeight),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (pinState != null) {
@@ -753,34 +796,65 @@ fun HalaTujuHomeMapShell(
                             ),
                             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            if (isLargeFontScale) {
                                 Column(
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .padding(end = 12.dp)
+                                        .fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     Text(
                                         text = "Location access needed",
                                         style = MaterialTheme.typography.titleMedium
                                     )
-                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = "Uses device GPS/Network without Google services.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    Button(
+                                        onClick = onRequestLocationPermission,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 48.dp)
+                                            .testTag("grant_location_button")
+                                    ) {
+                                        Text("Allow")
+                                    }
                                 }
-                                Button(
-                                    onClick = onRequestLocationPermission,
-                                    modifier = Modifier.testTag("grant_location_button")
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Allow")
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 12.dp)
+                                    ) {
+                                        Text(
+                                            text = "Location access needed",
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "Uses device GPS/Network without Google services.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Button(
+                                        onClick = onRequestLocationPermission,
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("grant_location_button")
+                                    ) {
+                                        Text("Allow")
+                                    }
                                 }
                             }
                         }
@@ -842,6 +916,7 @@ private fun HomePermissionHintCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Text(text = title, style = MaterialTheme.typography.titleMedium)
@@ -854,14 +929,19 @@ private fun HomePermissionHintCard(
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
             ) {
-                TextButton(onClick = onDismiss) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
                     Text("Not now")
                 }
                 Button(
                     onClick = onAction,
-                    modifier = Modifier.testTag(actionTag)
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag(actionTag)
                 ) {
                     Text(actionLabel)
                 }

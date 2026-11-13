@@ -138,19 +138,7 @@ jobs:
           disable-linux-hw-accel: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -no-metrics
           disable-animations: false
-          script: |
-            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
-            sleep 3
-            adb shell settings put global window_animation_scale 0.0 || true
-            adb shell settings put global transition_animation_scale 0.0 || true
-            adb shell settings put global animator_duration_scale 0.0 || true
-            TEST_STATUS=0
-            ./gradlew :app:connectedDebugAndroidTest --stacktrace || TEST_STATUS=$?
-            mkdir -p ci-emulator-artifacts/api-${{ matrix.api-level }}
-            adb exec-out screencap -p > ci-emulator-artifacts/api-${{ matrix.api-level }}/emulator_screen.png || true
-            adb shell dumpsys notification --noredact > ci-emulator-artifacts/api-${{ matrix.api-level }}/dumpsys_notification.txt || true
-            adb logcat -d > ci-emulator-artifacts/api-${{ matrix.api-level }}/logcat.txt || true
-            exit $TEST_STATUS
+          script: bash ./scripts/ci-run-emulator-tests.sh "${{ matrix.api-level }}"
 
       - name: Upload emulator test reports and diagnostics
         if: always()

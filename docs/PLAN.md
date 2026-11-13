@@ -45,20 +45,21 @@
   - [x] Add unit tests (lane parser, maxspeed parser, TTS stage scheduler, overspeed hysteresis) + screenshot tests
 
 - [ ] **M6 — Foreground Service + Android 16 Live Update Notification**
-  - [x] Implement `NavigationForegroundService` (`foregroundServiceType="location"`)
+  - [x] Implement `NavigationForegroundController` + `NavigationForegroundService` (`foregroundServiceType="location"`)
   - [x] Implement Android 16 (`API 36+`) `ProgressStyle` + `setRequestPromotedOngoing(true)` + `POST_PROMOTED_NOTIFICATIONS` + `setShortCriticalText` Live Update notification, plus API `< 36` standard ongoing notification fallback
   - [x] Handle runtime permissions (`ACCESS_FINE_LOCATION`, `POST_NOTIFICATIONS`, optional battery optimization hint) cleanly
-  - [ ] Verify notification on both Android 16 (API 36) and Android 12–14 (API 34) emulators in CI + unit tests
+  - [x] Verify Live Update & fallback notifications via Robolectric SDK 36 unit tests (`NavigationNotificationFactoryTest`)
+  - [ ] Verify notification on both Android 16 (API 36) and Android 14 (API 34) emulators in CI
 
-- [ ] **M7 — Simulation, GPX Replay/Record, Debug Overlay**
-  - [ ] Implement `SimulatedLocationSource` (1x/2x/4x speed, synthetic GPS noise/jitter, tunnel dropout, deliberate off-route trigger) driving the exact real pipeline
-  - [ ] Implement GPX 1.1 parser & recorder + share-sheet export
-  - [ ] Build full Settings screen (theme, units, voice/volume, overspeed tolerance, avoidances, endpoints, simulation & GPX, Developer toggle)
-  - [ ] Build Developer Debug Overlay (raw GPS, Kalman output, snapped position, accuracy circle, off-route state, cross-track error, zoom/speed debug)
+- [x] **M7 — Simulation, GPX Replay/Record, Debug Overlay**
+  - [x] Implement `SimulatedLocationSource` (1x/2x/4x speed, synthetic GPS noise/jitter, tunnel dropout, deliberate off-route trigger) driving the exact real pipeline
+  - [x] Implement GPX 1.1 parser & recorder + share-sheet export (`GpxCodec`, `GpxRecorder`, `GpxReplayLocationSource`)
+  - [x] Build full Settings screen (theme, units, voice/volume, overspeed tolerance, avoidances, endpoints with HTTPS/localhost network security policy, simulation & GPX, Developer toggle)
+  - [x] Build Developer Debug Overlay (raw GPS, Kalman output, snapped position, accuracy circle, off-route state, cross-track error, zoom/speed debug)
 
 - [ ] **M8 — Multi-Screen Polish, Accessibility, Performance, Release `v0.1.0`**
-  - [ ] Adaptive `WindowSizeClass` layouts for compact phones (`360×640`), large phones, foldables, tablets, portrait & landscape (side guidance panel)
-  - [ ] Edge-to-edge, cutouts, gesture bars, `200%` font scaling, TalkBack semantics audit
-  - [ ] Run Roborazzi screenshot suite across all device/theme/font configurations and store reviewed PNGs in `docs/screenshots/`
-  - [ ] Add instrumented E2E smoke test (launch → search KLCC → add stop → route KLIA → start simulated nav → reroute/arrival → end) and verify on emulators (API 36 & API 34)
-  - [ ] Run full local `./gradlew assembleDebug assembleRelease lint test` + CI checks, tag `v0.1.0`, confirm GitHub Release APK, and finalize `docs/STATUS.md`
+  - [x] Adaptive `WindowSizeClass` layouts for compact phones (`360×640`), large phones, foldables, tablets, portrait & landscape (side guidance panel)
+  - [x] Edge-to-edge, cutouts, gesture bars, `200%` font scaling, TalkBack semantics audit
+  - [x] Run Roborazzi screenshot suite across all device/theme/font configurations and store reviewed PNGs in `docs/screenshots/`
+  - [x] Write instrumented E2E & notification tests (`NavigationNotificationInstrumentedTest`, `OfflineE2ENavigationInstrumentedTest`) and verify `:app:compileDebugAndroidTestKotlin`
+  - [ ] Verify instrumented E2E & notification suites on KVM emulators (API 36 & API 34) in CI, finalize `docs/STATUS.md`, tag `v0.1.0`, and confirm GitHub Release APKs

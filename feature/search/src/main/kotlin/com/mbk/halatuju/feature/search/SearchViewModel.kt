@@ -438,7 +438,12 @@ class SearchViewModel internal constructor(
                     focusedField = null,
                     pendingFavoriteAssignment = null,
                     suggestions = emptyList(),
-                    searchError = null
+                    searchError = null,
+                    routePreview = if (d.toEndpoint != null) {
+                        d.routePreview.copy(isLoading = true, errorMessage = null)
+                    } else {
+                        d.routePreview
+                    }
                 )
                 SearchField.TO -> d.copy(
                     toEndpoint = selected,
@@ -446,7 +451,8 @@ class SearchViewModel internal constructor(
                     focusedField = null,
                     pendingFavoriteAssignment = null,
                     suggestions = emptyList(),
-                    searchError = null
+                    searchError = null,
+                    routePreview = d.routePreview.copy(isLoading = true, errorMessage = null)
                 )
                 SearchField.STOP -> {
                     val updatedStops = if (d.intermediateStops.size < SearchUiState.MAX_INTERMEDIATE_STOPS) {
@@ -460,7 +466,12 @@ class SearchViewModel internal constructor(
                         focusedField = null,
                         pendingFavoriteAssignment = null,
                         suggestions = emptyList(),
-                        searchError = null
+                        searchError = null,
+                        routePreview = if (d.toEndpoint != null && updatedStops != d.intermediateStops) {
+                            d.routePreview.copy(isLoading = true, errorMessage = null)
+                        } else {
+                            d.routePreview
+                        }
                     )
                 }
             }
@@ -483,7 +494,8 @@ class SearchViewModel internal constructor(
                 focusedField = null,
                 pendingFavoriteAssignment = null,
                 suggestions = emptyList(),
-                searchError = null
+                searchError = null,
+                routePreview = current.routePreview.copy(isLoading = true, errorMessage = null)
             )
         }
         rawQueryFlow.value = ""
@@ -500,7 +512,14 @@ class SearchViewModel internal constructor(
             val mutable = current.intermediateStops.toMutableList()
             val item = mutable.removeAt(index)
             mutable.add(index - 1, item)
-            current.copy(intermediateStops = mutable)
+            current.copy(
+                intermediateStops = mutable,
+                routePreview = if (current.toEndpoint != null) {
+                    current.routePreview.copy(isLoading = true, errorMessage = null)
+                } else {
+                    current.routePreview
+                }
+            )
         }
     }
 
@@ -510,7 +529,14 @@ class SearchViewModel internal constructor(
             val mutable = current.intermediateStops.toMutableList()
             val item = mutable.removeAt(index)
             mutable.add(index + 1, item)
-            current.copy(intermediateStops = mutable)
+            current.copy(
+                intermediateStops = mutable,
+                routePreview = if (current.toEndpoint != null) {
+                    current.routePreview.copy(isLoading = true, errorMessage = null)
+                } else {
+                    current.routePreview
+                }
+            )
         }
     }
 
@@ -519,7 +545,14 @@ class SearchViewModel internal constructor(
             if (index !in current.intermediateStops.indices) return@update current
             val mutable = current.intermediateStops.toMutableList()
             mutable.removeAt(index)
-            current.copy(intermediateStops = mutable)
+            current.copy(
+                intermediateStops = mutable,
+                routePreview = if (current.toEndpoint != null) {
+                    current.routePreview.copy(isLoading = true, errorMessage = null)
+                } else {
+                    current.routePreview
+                }
+            )
         }
     }
 

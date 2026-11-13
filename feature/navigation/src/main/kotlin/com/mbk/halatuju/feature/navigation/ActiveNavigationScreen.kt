@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,6 +49,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowHeightSizeClass
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,11 +64,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mbk.halatuju.core.map.HalaTujuMapSurface
@@ -78,6 +87,7 @@ import com.mbk.halatuju.core.navigation.OverspeedState
 import java.time.ZoneId
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 fun ActiveNavigationScreen(
     uiState: ActiveNavigationUiState,
@@ -114,29 +124,44 @@ fun ActiveNavigationScreen(
             .fillMaxSize()
             .testTag("active_navigation_screen")
     ) {
-        val isWide = maxWidth >= 600.dp
+        val availableMaxHeight = maxHeight
+        val windowSizeClass = WindowSizeClass.calculateFromSize(DpSize(maxWidth, maxHeight))
+        val isCompactHeight = windowSizeClass.heightSizeClass == WindowHeightSizeClass.Compact
+        val isLandscape = maxWidth > maxHeight
+        val useSideRail = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact ||
+            (isLandscape && maxWidth >= 560.dp)
+        val sideRailWidth = when {
+            !useSideRail -> 0.dp
+            maxWidth >= 960.dp -> 380.dp
+            maxWidth >= 760.dp -> 340.dp
+            !isCompactHeight && maxWidth >= 660.dp -> 312.dp
+            else -> 288.dp
+        }
+        val rightPaneWidth = (maxWidth - sideRailWidth - 28.dp).coerceAtLeast(0.dp)
+        val floatDebugTopEnd = useSideRail && !isCompactHeight && rightPaneWidth >= 340.dp
+
         val density = LocalDensity.current
         var portraitBottomBarHeightPx by remember { mutableIntStateOf(0) }
-        val bottomBarClearanceDp = if (!isWide && session.status == NavigationStatus.ACTIVE) {
+        val bottomBarClearanceDp = if (!useSideRail && session.status == NavigationStatus.ACTIVE) {
             with(density) {
-                val measured = if (portraitBottomBarHeightPx > 0) portraitBottomBarHeightPx else 80.dp.roundToPx()
+                val measured = if (portraitBottomBarHeightPx > 0) portraitBottomBarHeightPx else 84.dp.roundToPx()
                 measured.toDp() + 14.dp
             }
         } else {
             14.dp
         }
-        val attributionClearanceForSpeedDp = with(density) { 28.sp.toDp() } + 14.dp
-
+        val attributionClearanceForSpeedDp = with(density) { 14.sp.toDp() * 1.6f } + 16.dp
+        val wideLeftOffsetDp = if (useSideRail) sideRailWidth + 24.dp else 14.dp
         val wideLeftInsetPx = with(density) {
-            if (isWide) 396.dp.roundToPx() else 0
+            if (useSideRail) wideLeftOffsetDp.roundToPx() else 0
         }
 
         HalaTujuMapSurface(
             state = mapState,
             tileSource = tileSource,
             attributionPadding = PaddingValues(
-                start = if (isWide) 406.dp else 14.dp,
-                bottom = bottomBarClearanceDp + if (isWide) 0.dp else 4.dp
+                start = wideLeftOffsetDp,
+                bottom = bottomBarClearanceDp + if (useSideRail) 0.dp else 4.dp
             ),
             leftPanelInsetPx = wideLeftInsetPx,
             onUserPanMap = onUserPanMap,
@@ -151,12 +176,12 @@ fun ActiveNavigationScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
-            if (isWide) {
+            if (useSideRail) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(horizontal = 14.dp, vertical = 12.dp)
-                        .widthIn(max = 382.dp)
+                        .width(sideRailWidth)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -177,9 +202,17 @@ fun ActiveNavigationScreen(
                             onEndNavigation = onEndNavigation
                         )
                     }
+
+                    if (uiState.settings.developerDebugOverlayEnabled && !floatDebugTopEnd) {
+                        DeveloperDebugOverlay(
+                            uiState = uiState,
+                            onInjectTunnelBlackout = onInjectTunnelBlackout,
+                            onInjectOffRouteDetour = onInjectOffRouteDetour
+                        )
+                    }
                 }
 
-                if (uiState.settings.developerDebugOverlayEnabled) {
+                if (uiState.settings.developerDebugOverlayEnabled && floatDebugTopEnd) {
                     DeveloperDebugOverlay(
                         uiState = uiState,
                         onInjectTunnelBlackout = onInjectTunnelBlackout,
@@ -191,13 +224,17 @@ fun ActiveNavigationScreen(
                     )
                 }
             } else {
-                // Compact portrait layout
+                // Compact portrait layout: bound top guidance stack height so 200% font + debug HUD never overlaps speed or bottom strip
+                val topMaxHeight = (availableMaxHeight - bottomBarClearanceDp - attributionClearanceForSpeedDp - 78.dp)
+                    .coerceAtLeast(180.dp)
                 Column(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                         .widthIn(max = 460.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .heightIn(max = topMaxHeight)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     GuidanceTopSection(
@@ -243,8 +280,8 @@ fun ActiveNavigationScreen(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(
-                            start = if (isWide) 406.dp else 14.dp,
-                            bottom = if (isWide) {
+                            start = wideLeftOffsetDp,
+                            bottom = if (useSideRail) {
                                 46.dp
                             } else {
                                 bottomBarClearanceDp + attributionClearanceForSpeedDp
@@ -259,7 +296,7 @@ fun ActiveNavigationScreen(
                     .align(Alignment.BottomEnd)
                     .padding(
                         end = 14.dp,
-                        bottom = if (isWide || session.status != NavigationStatus.ACTIVE) 20.dp else bottomBarClearanceDp + 6.dp
+                        bottom = if (useSideRail || session.status != NavigationStatus.ACTIVE) 20.dp else bottomBarClearanceDp + 6.dp
                     ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End
@@ -320,7 +357,7 @@ fun ActiveNavigationScreen(
                     Button(
                         onClick = onRecenterClick,
                         modifier = Modifier
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("nav_recenter_button")
                             .semantics { contentDescription = "Recenter navigation camera" },
                         shape = RoundedCornerShape(24.dp),
@@ -336,7 +373,7 @@ fun ActiveNavigationScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Recenter")
+                        Text("Recenter", maxLines = 1)
                     }
                 }
             }
@@ -368,6 +405,7 @@ private fun GuidanceTopSection(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ManeuverBannerCard(
     banner: GuidanceBannerState,
@@ -446,9 +484,10 @@ private fun ManeuverBannerCard(
                 Spacer(modifier = Modifier.width(14.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = NavigationFormatters.formatManeuverDistance(
@@ -490,7 +529,7 @@ private fun ManeuverBannerCard(
                             text = dests,
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.85f),
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -612,13 +651,17 @@ private fun SpeedCluster(
         }
 
         if (showSpeedBadge) {
+            val density = LocalDensity.current
             val limitVal = NavigationFormatters.formatSpeedValue(
                 limitKmh,
                 unitSystem
             )
+            val badgeSize = if (density.fontScale >= 1.5f) 56.dp else 50.dp
+            val effectiveScale = density.fontScale.coerceIn(1.0f, 1.3f)
+            val badgeFontSize = with(density) { (16f * effectiveScale).dp.toSp() }
             Box(
                 modifier = Modifier
-                    .size(50.dp)
+                    .size(badgeSize)
                     .background(Color.White, CircleShape)
                     .border(4.dp, HalaTujuPalette.SpeedLimitRed, CircleShape)
                     .testTag("nav_speed_limit_badge")
@@ -629,8 +672,9 @@ private fun SpeedCluster(
             ) {
                 Text(
                     text = limitVal.toString(),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = badgeFontSize),
                     fontWeight = FontWeight.Bold,
+                    maxLines = 1,
                     color = Color(0xFF161D1D)
                 )
             }
@@ -638,16 +682,19 @@ private fun SpeedCluster(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StatusBadgesRow(session: NavigationSessionState) {
     if (!session.isRerouting && !session.isGpsSignalWeak) return
-    Row(
+    FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         if (session.isRerouting) {
             Surface(
-                modifier = Modifier.testTag("rerouting_pill"),
+                modifier = Modifier
+                    .testTag("rerouting_pill")
+                    .semantics { liveRegion = LiveRegionMode.Polite },
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.secondaryContainer,
                 tonalElevation = 3.dp
@@ -662,7 +709,9 @@ private fun StatusBadgesRow(session: NavigationSessionState) {
         }
         if (session.isGpsSignalWeak) {
             Surface(
-                modifier = Modifier.testTag("gps_weak_pill"),
+                modifier = Modifier
+                    .testTag("gps_weak_pill")
+                    .semantics { liveRegion = LiveRegionMode.Polite },
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
                 tonalElevation = 3.dp
@@ -695,10 +744,12 @@ private fun StopArrivalCard(
     onContinue: () -> Unit,
     onEnd: () -> Unit
 ) {
+    val isLargeFont = LocalDensity.current.fontScale >= 1.55f
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("nav_stop_arrival_card"),
+            .testTag("nav_stop_arrival_card")
+            .semantics { liveRegion = LiveRegionMode.Polite },
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)
@@ -723,27 +774,53 @@ private fun StopArrivalCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onEnd,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .testTag("nav_stop_end_button")
+            if (isLargeFont) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("End")
+                    Button(
+                        onClick = onContinue,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("nav_continue_stop_button")
+                    ) {
+                        Text("Continue", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(
+                        onClick = onEnd,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("nav_stop_end_button")
+                    ) {
+                        Text("End", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
-                Button(
-                    onClick = onContinue,
-                    modifier = Modifier
-                        .weight(1.6f)
-                        .height(48.dp)
-                        .testTag("nav_continue_stop_button")
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Continue")
+                    OutlinedButton(
+                        onClick = onEnd,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("nav_stop_end_button")
+                    ) {
+                        Text("End", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    Button(
+                        onClick = onContinue,
+                        modifier = Modifier
+                            .weight(1.6f)
+                            .heightIn(min = 48.dp)
+                            .testTag("nav_continue_stop_button")
+                    ) {
+                        Text("Continue", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -757,55 +834,102 @@ private fun DestinationArrivalCard(
 ) {
     val destName = session.route?.waypoints?.lastOrNull()?.name?.takeIf { it.isNotBlank() }
         ?: "your destination"
+    val isLargeFont = LocalDensity.current.fontScale >= 1.55f
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("nav_destination_arrival_card"),
+            .testTag("nav_destination_arrival_card")
+            .semantics { liveRegion = LiveRegionMode.Polite },
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.CheckCircle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(34.dp)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "You have arrived",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = destName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Button(
-                onClick = onDone,
+        if (isLargeFont) {
+            Column(
                 modifier = Modifier
-                    .height(48.dp)
-                    .testTag("nav_done_button")
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Done")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "You have arrived",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = destName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Button(
+                    onClick = onDone,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("nav_done_button")
+                ) {
+                    Text("Done", maxLines = 1)
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(34.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "You have arrived",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = destName,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Button(
+                    onClick = onDone,
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("nav_done_button")
+                ) {
+                    Text("Done", maxLines = 1)
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NavigationBottomBar(
     session: NavigationSessionState,
@@ -831,9 +955,10 @@ private fun NavigationBottomBar(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    itemVerticalAlignment = Alignment.Bottom
                 ) {
                     Text(
                         text = NavigationFormatters.formatRemainingDuration(session.remainingDurationSeconds),
@@ -864,7 +989,7 @@ private fun NavigationBottomBar(
             Button(
                 onClick = onEndNavigation,
                 modifier = Modifier
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("nav_end_button"),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -878,12 +1003,13 @@ private fun NavigationBottomBar(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("End")
+                Text("End", maxLines = 1)
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DeveloperDebugOverlay(
     uiState: ActiveNavigationUiState,
@@ -913,12 +1039,13 @@ private fun DeveloperDebugOverlay(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                itemVerticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "DEV TELEMETRY · $rawProvider",
@@ -941,7 +1068,7 @@ private fun DeveloperDebugOverlay(
                     text = "GPX REPLAY: ${uiState.gpxReplayState.trackName ?: "trace"} (${uiState.gpxReplayState.pointCount} pts)",
                     style = MaterialTheme.typography.labelSmall,
                     color = HalaTujuPalette.AmberAccent,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -949,13 +1076,13 @@ private fun DeveloperDebugOverlay(
             val rawLine = if (rawPos != null) {
                 String.format(
                     Locale.US,
-                    "Raw: %.5f, %.5f (±%dm)",
+                    "Raw:    %.5f, %.5f (±%dm)",
                     rawPos.latitude,
                     rawPos.longitude,
                     rawAcc ?: 0
                 )
             } else {
-                "Raw: —"
+                "Raw:    —"
             }
             Text(
                 text = rawLine,
@@ -965,16 +1092,24 @@ private fun DeveloperDebugOverlay(
                 overflow = TextOverflow.Ellipsis
             )
 
-            val filteredLine = String.format(
-                Locale.US,
-                "Kalman: %s  |  Snap: %s",
-                kalmanPos?.let { String.format(Locale.US, "%.5f,%.5f", it.latitude, it.longitude) } ?: "—",
-                snapPos?.let { String.format(Locale.US, "%.5f,%.5f", it.latitude, it.longitude) } ?: "—"
-            )
+            val kalmanLine = "Kalman: " + (kalmanPos?.let {
+                String.format(Locale.US, "%.5f, %.5f", it.latitude, it.longitude)
+            } ?: "—")
             Text(
-                text = filteredLine,
+                text = kalmanLine,
                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                color = Color(0xFFB2DFDB),
+                color = Color(0xFF80DEEA),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            val snapLine = "Snap:   " + (snapPos?.let {
+                String.format(Locale.US, "%.5f, %.5f", it.latitude, it.longitude)
+            } ?: "—")
+            Text(
+                text = snapLine,
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                color = Color(0xFFA5D6A7),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -995,7 +1130,7 @@ private fun DeveloperDebugOverlay(
                 text = metricsLine,
                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                 color = if (dbg.isOffRoute) HalaTujuPalette.AmberAccent else Color(0xFFE0F2F1),
-                maxLines = 2,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
 
@@ -1021,7 +1156,8 @@ private fun DeveloperDebugOverlay(
                                 "Tunnel 8s"
                             },
                             style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     FilledTonalButton(
@@ -1039,7 +1175,8 @@ private fun DeveloperDebugOverlay(
                                 "Off-route"
                             },
                             style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

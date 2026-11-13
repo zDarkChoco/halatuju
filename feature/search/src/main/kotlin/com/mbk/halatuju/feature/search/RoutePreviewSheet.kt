@@ -3,6 +3,7 @@ package com.mbk.halatuju.feature.search
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.ArrowDownward
@@ -40,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -68,11 +73,13 @@ fun RoutePreviewSheet(
     onStartNavigation: (NavRoute) -> Unit,
     onDismissRoute: () -> Unit,
     modifier: Modifier = Modifier,
+    scrollable: Boolean = true,
     clockZoneId: ZoneId = ZoneId.systemDefault()
 ) {
     val selectedRoute = previewState.selectedRoute
     val avoidanceTags = RoutePreviewFormatter.formatAvoidancesSummary(previewState.activeAvoidances)
     val canAddMoreStops = intermediateStops.size < SearchUiState.MAX_INTERMEDIATE_STOPS
+    val isLargeFontScale = LocalDensity.current.fontScale >= 1.55f
 
     Card(
         modifier = modifier
@@ -85,11 +92,11 @@ fun RoutePreviewSheet(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp)
-        ) {
+        val contentModifier = Modifier
+            .fillMaxWidth()
+            .let { if (scrollable) it.verticalScroll(rememberScrollState()) else it }
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+        Column(modifier = contentModifier) {
             if (previewState.isLoading) {
                 LinearProgressIndicator(
                     modifier = Modifier
@@ -106,7 +113,7 @@ fun RoutePreviewSheet(
                         .fillMaxWidth()
                         .padding(bottom = 10.dp)
                         .testTag("intermediate_stops_section"),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Text(
                         text = if (intermediateStops.size == 1) "1 stop" else "${intermediateStops.size} stops",
@@ -146,7 +153,9 @@ fun RoutePreviewSheet(
                             )
                             TextButton(
                                 onClick = onRetryRoute,
-                                modifier = Modifier.testTag("retry_route_button")
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("retry_route_button")
                             ) {
                                 Text("Retry route")
                             }
@@ -154,7 +163,7 @@ fun RoutePreviewSheet(
                         IconButton(
                             onClick = onDismissRoute,
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(48.dp)
                                 .testTag("close_route_preview_button")
                                 .semantics { contentDescription = "Close route preview" }
                         ) {
@@ -226,7 +235,7 @@ fun RoutePreviewSheet(
                                     text = "via ${selectedRoute.summaryLabel}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -235,7 +244,7 @@ fun RoutePreviewSheet(
                         IconButton(
                             onClick = onDismissRoute,
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(48.dp)
                                 .testTag("close_route_preview_button")
                                 .semantics { contentDescription = "Close route preview" }
                         ) {
@@ -243,22 +252,35 @@ fun RoutePreviewSheet(
                         }
                     }
 
-                    // Up to 3 selectable alternative route cards sized equally to fit compact screens without cropping
+                    // Up to 3 selectable alternative route cards sized to remain legible at standard & 200% font scale
                     if (previewState.candidateRoutes.size > 1) {
                         Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
+                        val stripModifier = if (isLargeFontScale) {
+                            Modifier
                                 .fillMaxWidth()
-                                .testTag("alternative_routes_strip"),
+                                .horizontalScroll(rememberScrollState())
+                                .testTag("alternative_routes_strip")
+                        } else {
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("alternative_routes_strip")
+                        }
+                        Row(
+                            modifier = stripModifier,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             previewState.candidateRoutes.take(3).forEachIndexed { idx, candidate ->
                                 val isSelected = idx == previewState.selectedRouteIndex
                                 val altEta = RoutePreviewFormatter.formatDurationSeconds(candidate.adjustedDurationSeconds)
                                 val altDist = RoutePreviewFormatter.formatDistanceMeters(candidate.totalDistanceMeters, unitSystem)
+                                val cardWidthMod = if (isLargeFontScale) {
+                                    Modifier.widthIn(min = 136.dp, max = 200.dp)
+                                } else {
+                                    Modifier.weight(1f)
+                                }
                                 Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
+                                    modifier = cardWidthMod
+                                        .heightIn(min = 48.dp)
                                         .clip(RoundedCornerShape(14.dp))
                                         .clickable(role = Role.Tab) { onSelectRoute(idx) }
                                         .testTag("route_alternative_$idx")
@@ -330,13 +352,15 @@ fun RoutePreviewSheet(
                     ) {
                         Text(
                             text = "Calculating route...",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.weight(1f)
                         )
                         IconButton(
                             onClick = onDismissRoute,
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(48.dp)
                                 .testTag("close_route_preview_button")
+                                .semantics { contentDescription = "Close route preview" }
                         ) {
                             Icon(Icons.Default.Close, contentDescription = null)
                         }
@@ -346,48 +370,95 @@ fun RoutePreviewSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Primary actions row: calm secondary "Add stop" + prominent primary "Start"
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    onClick = onAddStopClick,
-                    enabled = canAddMoreStops,
-                    modifier = Modifier
-                        .height(52.dp)
-                        .testTag("add_stop_button")
+            // Primary actions: calm secondary "Add stop" + prominent primary "Start"
+            if (isLargeFontScale) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AddLocationAlt,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Add stop", maxLines = 1)
+                    Button(
+                        onClick = { selectedRoute?.let(onStartNavigation) },
+                        enabled = selectedRoute != null && !previewState.isLoading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .testTag("start_navigation_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Start",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onAddStopClick,
+                        enabled = canAddMoreStops,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 52.dp)
+                            .testTag("add_stop_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddLocationAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add stop", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
-
-                Button(
-                    onClick = { selectedRoute?.let(onStartNavigation) },
-                    enabled = selectedRoute != null && !previewState.isLoading,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                        .testTag("start_navigation_button")
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Navigation,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Start",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
+                    OutlinedButton(
+                        onClick = onAddStopClick,
+                        enabled = canAddMoreStops,
+                        modifier = Modifier
+                            .heightIn(min = 52.dp)
+                            .testTag("add_stop_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddLocationAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add stop", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+
+                    Button(
+                        onClick = { selectedRoute?.let(onStartNavigation) },
+                        enabled = selectedRoute != null && !previewState.isLoading,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 52.dp)
+                            .testTag("start_navigation_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Start",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -406,7 +477,7 @@ private fun StopRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 42.dp)
+            .heightIn(min = 48.dp)
             .testTag("stop_row_$index"),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -424,12 +495,12 @@ private fun StopRow(
                 fontWeight = FontWeight.Bold
             )
         }
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = place.name,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
@@ -437,7 +508,7 @@ private fun StopRow(
             onClick = onMoveUp,
             enabled = index > 0,
             modifier = Modifier
-                .size(36.dp)
+                .size(48.dp)
                 .testTag("move_stop_up_$index")
                 .semantics { contentDescription = "Move ${place.name} earlier" }
         ) {
@@ -451,7 +522,7 @@ private fun StopRow(
             onClick = onMoveDown,
             enabled = index < total - 1,
             modifier = Modifier
-                .size(36.dp)
+                .size(48.dp)
                 .testTag("move_stop_down_$index")
                 .semantics { contentDescription = "Move ${place.name} later" }
         ) {
@@ -464,7 +535,7 @@ private fun StopRow(
         IconButton(
             onClick = onRemove,
             modifier = Modifier
-                .size(36.dp)
+                .size(48.dp)
                 .testTag("remove_stop_$index")
                 .semantics { contentDescription = "Remove stop ${place.name}" }
         ) {

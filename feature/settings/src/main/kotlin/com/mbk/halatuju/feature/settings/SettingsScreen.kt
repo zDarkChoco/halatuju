@@ -65,6 +65,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mbk.halatuju.core.location.GpxRecordingState
@@ -157,7 +158,7 @@ fun SettingsScreen(
                                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
                                 modifier = Modifier.testTag("theme_option_${mode.name.lowercase()}")
                             ) {
-                                Text(label, maxLines = 1)
+                                Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -180,7 +181,7 @@ fun SettingsScreen(
                                 onClick = { onUnitSystemChange(unit) },
                                 shape = SegmentedButtonDefaults.itemShape(index, unitOptions.size)
                             ) {
-                                Text(label, maxLines = 1)
+                                Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -229,7 +230,8 @@ fun SettingsScreen(
                         Text(
                             text = "Voice & chime volume",
                             style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f).padding(end = 8.dp)
                         )
                         Text(
                             text = "${(settings.voiceVolume * 100f).roundToInt()}%",
@@ -298,7 +300,7 @@ fun SettingsScreen(
                                 shape = SegmentedButtonDefaults.itemShape(index, speeds.size),
                                 modifier = Modifier.testTag("sim_speed_$label")
                             ) {
-                                Text(label, maxLines = 1)
+                                Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -329,50 +331,67 @@ fun SettingsScreen(
                         switchTag = "gpx_record_switch"
                     )
 
-                    Row(
+                    FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         OutlinedButton(
                             onClick = onExportGpx,
                             enabled = gpxRecordingState.recordedFixCount > 0,
                             modifier = Modifier
-                                .weight(1f)
+                                .heightIn(min = 48.dp)
                                 .testTag("gpx_export_button")
                         ) {
-                            Text("Export GPX (${gpxRecordingState.recordedFixCount})", maxLines = 1)
+                            Text(
+                                text = "Export GPX (${gpxRecordingState.recordedFixCount})",
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         TextButton(
                             onClick = onClearGpxRecording,
                             enabled = gpxRecordingState.recordedFixCount > 0,
-                            modifier = Modifier.testTag("gpx_clear_button")
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("gpx_clear_button")
                         ) {
                             Text("Clear")
                         }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Button(
                             onClick = onRequestImportGpx,
                             modifier = Modifier
-                                .weight(1f)
+                                .heightIn(min = 48.dp)
                                 .testTag("gpx_replay_import_button")
                         ) {
-                            Text("Replay .gpx file", maxLines = 1)
+                            Text(
+                                text = "Replay .gpx file",
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                         if (gpxReplayState.isActive) {
                             OutlinedButton(
                                 onClick = onStopGpxReplay,
-                                modifier = Modifier.testTag("gpx_replay_stop_button")
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .testTag("gpx_replay_stop_button")
                             ) {
-                                Text("Stop replay", maxLines = 1)
+                                Text(
+                                    text = "Stop replay",
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }
@@ -411,9 +430,13 @@ fun SettingsScreen(
                         onClick = { showEndpointsDialog = true },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 48.dp)
                             .testTag("configure_endpoints_button")
                     ) {
-                        Text("Configure custom / self-hosted endpoints")
+                        Text(
+                            text = "Configure custom / self-hosted endpoints",
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
@@ -472,6 +495,7 @@ fun SettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 48.dp)
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -515,24 +539,29 @@ private fun EndpointPreviewLine(label: String, url: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(0.45f)
         )
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = url,
             style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(0.55f)
         )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ServiceEndpointsDialog(
     current: ServiceEndpoints,
@@ -588,51 +617,61 @@ private fun ServiceEndpointsDialog(
                 Text(
                     text = "Service Endpoints",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = AlertDialogDefaults.titleContentColor
+                    color = AlertDialogDefaults.titleContentColor,
+                    modifier = Modifier.semantics { heading() }
                 )
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 380.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .weight(1f, fill = false)
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 10.dp, bottom = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedTextField(
                         value = lightStyle,
                         onValueChange = { lightStyle = it },
-                        label = { Text("Light style JSON URL") },
+                        label = { Text("Light style URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("endpoint_light_input")
                     )
                     OutlinedTextField(
                         value = darkTile,
                         onValueChange = { darkTile = it },
-                        label = { Text("Dark vector tile / TileJSON URL") },
+                        label = { Text("Dark TileJSON URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("endpoint_dark_input")
                     )
                     OutlinedTextField(
                         value = valhalla,
                         onValueChange = { valhalla = it },
-                        label = { Text("Valhalla base URL") },
+                        label = { Text("Valhalla base URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("endpoint_valhalla_input")
                     )
                     OutlinedTextField(
                         value = photon,
                         onValueChange = { photon = it },
-                        label = { Text("Photon geocoder URL") },
+                        label = { Text("Photon URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("endpoint_photon_input")
                     )
                     OutlinedTextField(
                         value = nominatim,
                         onValueChange = { nominatim = it },
-                        label = { Text("Nominatim reverse URL") },
+                        label = { Text("Nominatim URL", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth().testTag("endpoint_nominatim_input")
                     )
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     TextButton(
                         onClick = {
                             val defaults = ServiceEndpoints()
@@ -646,21 +685,14 @@ private fun ServiceEndpointsDialog(
                             .heightIn(min = 48.dp)
                             .testTag("endpoints_reset_button")
                     ) {
-                        Text("Reset to open public defaults")
+                        Text("Reset defaults")
                     }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
                     TextButton(
                         onClick = onDismiss,
                         modifier = Modifier.heightIn(min = 48.dp)
                     ) {
                         Text("Cancel")
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
                             val defaults = ServiceEndpoints()
@@ -721,6 +753,7 @@ private fun SettingsSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .let { if (switchTag != null) it.testTag(switchTag) else it }
             .clickable(role = Role.Switch) { onCheckedChange(!checked) }
             .padding(vertical = 8.dp),
@@ -752,6 +785,7 @@ private fun SettingsActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,

@@ -2,14 +2,19 @@ package com.mbk.halatuju.feature.search
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Bookmark
@@ -30,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -38,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.mbk.halatuju.core.model.FavoriteKind
 import java.util.Locale
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DroppedPinCard(
     pinState: DroppedPinState,
@@ -53,6 +60,7 @@ fun DroppedPinCard(
     val title = place?.name ?: if (pinState.isLoading) "Looking up address..." else "Dropped pin"
     val subtitle = place?.subtitle?.takeIf { it.isNotBlank() }
         ?: String.format(Locale.US, "%.5f, %.5f", pinState.location.latitude, pinState.location.longitude)
+    val isLargeFontScale = LocalDensity.current.fontScale >= 1.55f
 
     Card(
         modifier = modifier
@@ -65,7 +73,11 @@ fun DroppedPinCard(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
             if (pinState.isLoading) {
                 LinearProgressIndicator(
                     modifier = Modifier
@@ -103,7 +115,7 @@ fun DroppedPinCard(
                 IconButton(
                     onClick = onDismiss,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(48.dp)
                         .testTag("dismiss_pin_button")
                         .semantics { contentDescription = "Dismiss dropped pin" }
                 ) {
@@ -113,9 +125,10 @@ fun DroppedPinCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 AssistChip(
                     onClick = { onSaveFavorite(FavoriteKind.HOME) },
@@ -152,27 +165,53 @@ fun DroppedPinCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onSetOrigin,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .testTag("pin_set_from_button")
+            if (isLargeFontScale) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Set From", maxLines = 1)
+                    Button(
+                        onClick = onSetDestination,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("pin_set_to_button")
+                    ) {
+                        Text("Set Destination", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(
+                        onClick = onSetOrigin,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .testTag("pin_set_from_button")
+                    ) {
+                        Text("Set From", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
-                Button(
-                    onClick = onSetDestination,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .testTag("pin_set_to_button")
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Set Destination", maxLines = 1)
+                    OutlinedButton(
+                        onClick = onSetOrigin,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("pin_set_from_button")
+                    ) {
+                        Text("Set From", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    Button(
+                        onClick = onSetDestination,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("pin_set_to_button")
+                    ) {
+                        Text("Set Destination", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
