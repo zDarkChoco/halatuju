@@ -448,23 +448,63 @@ private fun FallbackPreviewMapCanvas(
             }
             drawLine(roadHighway, Offset(0f, h * 0.78f), Offset(w, h * 0.32f), strokeWidth = 18f)
 
-            // Active route overlay if present in preview state
+            // Active + alternative route overlays if present in preview state
             val active = state.activeRoute
             if (active != null && active.geometry.size >= 2) {
-                val split = RouteGeometrySplitter.splitAtDistance(active, state.traveledDistanceMeters)
-                val centerLat = state.puckState?.position?.latitude ?: state.cameraState.center.latitude
-                val centerLon = state.puckState?.position?.longitude ?: state.cameraState.center.longitude
-                val metersPerPx = 6.0
+                val allPoints = buildList {
+                    addAll(active.geometry)
+                    state.alternativeRoutes.forEach { addAll(it.geometry) }
+                }
+                val isOverview = state.cameraState.mode == MapCameraMode.OVERVIEW
+                val minLat = allPoints.minOf { it.latitude }
+                val maxLat = allPoints.maxOf { it.latitude }
+                val minLon = allPoints.minOf { it.longitude }
+                val maxLon = allPoints.maxOf { it.longitude }
+                val refCenter = if (isOverview) {
+                    LatLng((minLat + maxLat) * 0.5, (minLon + maxLon) * 0.5)
+                } else {
+                    state.puckState?.position ?: state.cameraState.center
+                }
+                val metersPerPx = if (isOverview) {
+                    val (spanE, spanN) = GeoMath.toLocalEnMeters(LatLng(minLat, minLon), LatLng(maxLat, maxLon))
+                    val usableW = (w * 0.72f).coerceAtLeast(100f)
+                    val usableH = (h * 0.38f).coerceAtLeast(100f)
+                    maxOf(spanE.toFloat() / usableW, spanN.toFloat() / usableH, 6.0f).toDouble()
+                } else {
+                    6.0
+                }
+                val anchorY = when (state.cameraState.mode) {
+                    MapCameraMode.NAVIGATION_25D -> h * 0.67f
+                    MapCameraMode.OVERVIEW -> h * 0.43f
+                    else -> h * 0.5f
+                }
 
                 fun project(pt: LatLng): Offset {
-                    val (e, n) = GeoMath.toLocalEnMeters(LatLng(centerLat, centerLon), pt)
-                    val anchorY = if (state.cameraState.mode == MapCameraMode.NAVIGATION_25D) h * 0.67f else h * 0.5f
+                    val (e, n) = GeoMath.toLocalEnMeters(refCenter, pt)
                     return Offset(
                         x = w * 0.5f + (e / metersPerPx).toFloat(),
                         y = anchorY - (n / metersPerPx).toFloat()
                     )
                 }
 
+                val altColor = if (state.isDarkTheme) Color(0xFF546E7A) else Color(0xFF90A4AE)
+                state.alternativeRoutes
+                    .filterIndexed { idx, _ -> idx != state.selectedRouteIndex }
+                    .forEach { alt ->
+                        if (alt.geometry.size >= 2) {
+                            val altPath = Path().apply {
+                                val first = project(alt.geometry.first())
+                                moveTo(first.x, first.y)
+                                alt.geometry.drop(1).forEach { p ->
+                                    val o = project(p)
+                                    lineTo(o.x, o.y)
+                                }
+                            }
+                            drawPath(altPath, altColor, style = Stroke(11f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                        }
+                    }
+
+                val split = RouteGeometrySplitter.splitAtDistance(active, state.traveledDistanceMeters)
                 if (split.traveled.size >= 2) {
                     val tPath = Path().apply {
                         val first = project(split.traveled.first())
@@ -486,6 +526,18 @@ private fun FallbackPreviewMapCanvas(
                         }
                     }
                     drawPath(rPath, routeColor, style = Stroke(16f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+
+                // Waypoint & destination dots
+                state.waypoints.drop(1).forEachIndexed { idx, wp ->
+                    val pt = project(wp.location)
+                    val isDest = idx == state.waypoints.size - 2
+                    drawCircle(color = Color.White, radius = 15f, center = pt)
+                    drawCircle(
+                        color = if (isDest) Color(0xFFD92B2B) else HalaTujuPalette.AmberAccent,
+                        radius = 11f,
+                        center = pt
+                    )
                 }
             }
 

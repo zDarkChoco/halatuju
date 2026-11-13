@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
@@ -44,7 +45,9 @@ fun DroppedPinCard(
     onSetOrigin: () -> Unit,
     onSaveFavorite: (FavoriteKind) -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    canAddStop: Boolean = false,
+    onAddStop: () -> Unit = {}
 ) {
     val place = pinState.resolvedPlace
     val title = place?.name ?: if (pinState.isLoading) "Looking up address..." else "Dropped pin"
@@ -135,6 +138,16 @@ fun DroppedPinCard(
                         Icon(Icons.Default.Bookmark, contentDescription = null, modifier = Modifier.size(16.dp))
                     }
                 )
+                if (canAddStop) {
+                    AssistChip(
+                        onClick = onAddStop,
+                        label = { Text("Add stop", maxLines = 1) },
+                        leadingIcon = {
+                            Icon(Icons.Default.AddLocationAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        modifier = Modifier.testTag("pin_add_stop_chip")
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))

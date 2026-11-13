@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
@@ -53,6 +54,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,6 +97,13 @@ fun HomeSearchCard(
     val focusManager = LocalFocusManager.current
     val fromFocusRequester = remember { FocusRequester() }
     val toFocusRequester = remember { FocusRequester() }
+    val stopFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(state.focusedField) {
+        if (state.focusedField == SearchField.STOP) {
+            runCatching { stopFocusRequester.requestFocus() }
+        }
+    }
 
     BackHandler(enabled = state.isFocused) {
         focusManager.clearFocus(force = true)
@@ -118,7 +127,7 @@ fun HomeSearchCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Top two-field header (always visible: From + Where to? + Swap button)
+            // Top two-field header (From + Where to? + Swap button), plus transient Add stop row when focused
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -179,6 +188,35 @@ fun HomeSearchCard(
                         onValueChange = { onQueryChanged(SearchField.TO, it) },
                         onClearClick = { onClearField(SearchField.TO) }
                     )
+
+                    if (state.focusedField == SearchField.STOP) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 28.dp, end = 4.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)
+                        )
+                        SearchEndpointRow(
+                            label = "Add stop",
+                            value = state.stopQueryText,
+                            placeholder = "Search stop to add...",
+                            isMyLocationStyled = false,
+                            isFocused = true,
+                            showClear = state.stopQueryText.isNotEmpty(),
+                            focusRequester = stopFocusRequester,
+                            testTag = "search_stop_input",
+                            clearTestTag = "clear_stop_button",
+                            leadingDot = {
+                                Icon(
+                                    imageVector = Icons.Default.AddLocationAlt,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            onFocused = { onFieldFocused(SearchField.STOP) },
+                            onValueChange = { onQueryChanged(SearchField.STOP, it) },
+                            onClearClick = { onClearField(SearchField.STOP) }
+                        )
+                    }
                 }
 
                 IconButton(
@@ -382,18 +420,20 @@ private fun SearchFocusedPanel(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AssistChip(
-                onClick = onUseMyLocationClick,
-                label = { Text("My location", maxLines = 1) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.MyLocation,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                },
-                modifier = Modifier.testTag("shortcut_my_location")
-            )
+            if (state.focusedField != SearchField.STOP) {
+                AssistChip(
+                    onClick = onUseMyLocationClick,
+                    label = { Text("My location", maxLines = 1) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.MyLocation,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    modifier = Modifier.testTag("shortcut_my_location")
+                )
+            }
 
             AssistChip(
                 onClick = { onFavoriteShortcutClick(FavoriteKind.HOME) },

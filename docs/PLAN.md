@@ -23,11 +23,11 @@
   - [x] Build Home floating search card (`From` defaulting to `"My location"`, `Where to?`, swap button, recents & Home/Work favorites shown only when focused)
   - [x] Add unit tests with recorded KL Photon & Nominatim JSON fixtures + screenshot tests
 
-- [ ] **M3 — Routing, Preview, Alternatives, Add/Reorder Stops, Traffic Model**
-  - [ ] Implement `Router` interface + `ValhallaRouter` (OSRM format, `bannerInstructions`, `voiceInstructions`, `intersections[].lanes`, `annotation.maxspeed`, `alternates`, `costing_options.auto` avoid tolls/highways/ferries, `date_time`, response cache)
-  - [ ] Implement `TrafficProvider` + `KlPeakTrafficProvider` (documented in `docs/TRAFFIC.md`) + `docs/SELF_HOSTING.md` (Valhalla Docker + Geofabrik `malaysia-singapore-brunei`)
-  - [ ] Build Route Preview UI (ETA, distance, arrival clock time, "estimated" label, up to 3 alternatives selectable on map & sheet, Add/Reorder/Remove intermediate stops with auto-reroute, big Start button)
-  - [ ] Add unit tests with recorded KLCC → KLIA Valhalla JSON fixtures (including maxspeed, lanes, alternatives, avoid tolls) + screenshot tests
+- [x] **M3 — Routing, Preview, Alternatives, Add/Reorder Stops, Traffic Model**
+  - [x] Implement `Router` interface + `ValhallaRouter` (OSRM format, `bannerInstructions`, `voiceInstructions`, `intersections[].lanes`, `annotation.maxspeed`, `alternates`, `costing_options.auto` avoid tolls/highways/ferries, `date_time`, response cache)
+  - [x] Implement `TrafficProvider` + `KlPeakTrafficProvider` (documented in `docs/TRAFFIC.md`) + `docs/SELF_HOSTING.md` (Valhalla Docker + Geofabrik `malaysia-singapore-brunei`)
+  - [x] Build Route Preview UI (ETA, distance, arrival clock time, "estimated" label, up to 3 alternatives selectable on map & sheet, Add/Reorder/Remove intermediate stops with auto-reroute, big Start button)
+  - [x] Add unit tests with recorded KLCC → KLIA Valhalla JSON fixtures (including maxspeed, lanes, alternatives, avoid tolls) + screenshot tests
 
 - [ ] **M4 — Navigation Session: Kalman, Snap, Bearing, Off-Route, Reroute, 2.5D Camera, Auto-Zoom, Wake Lock**
   - [ ] Implement `:core:navigation` (`EnuKalmanFilter`, `BearingSmoother`, `RouteSnapper`, `OffRouteDetector`, `DeadReckoner`, `AutoZoomController`, `NavigationEngine`, `NavigationSessionManager`)

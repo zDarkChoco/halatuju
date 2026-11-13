@@ -13,6 +13,8 @@ import com.mbk.halatuju.core.model.KlDefaults
 import com.mbk.halatuju.core.model.LocationFix
 import com.mbk.halatuju.core.model.MapCameraMode
 import com.mbk.halatuju.core.model.MapCameraState
+import com.mbk.halatuju.core.model.NavRoute
+import com.mbk.halatuju.core.model.Place
 import com.mbk.halatuju.core.model.PuckRenderState
 import com.mbk.halatuju.core.storage.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,7 +26,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
@@ -101,8 +102,18 @@ class MainViewModel @Inject constructor(
         cameraMode.value = MapCameraMode.FREE_PAN
     }
 
+    fun enterRouteOverview() {
+        cameraMode.value = MapCameraMode.OVERVIEW
+    }
+
+    fun returnToFollowPuck() {
+        if (cameraMode.value == MapCameraMode.OVERVIEW) {
+            cameraMode.value = MapCameraMode.FOLLOW_PUCK
+        }
+    }
+
     fun onRecenterClick() {
-        if (cameraMode.value == MapCameraMode.FREE_PAN) {
+        if (cameraMode.value == MapCameraMode.FREE_PAN || cameraMode.value == MapCameraMode.OVERVIEW) {
             cameraMode.value = MapCameraMode.FOLLOW_PUCK
         } else {
             tiltPreview.value = !tiltPreview.value
@@ -112,8 +123,11 @@ class MainViewModel @Inject constructor(
     fun toMapRenderingState(
         state: MainUiState,
         isDarkTheme: Boolean,
-        waypoints: List<com.mbk.halatuju.core.model.Place> = emptyList(),
-        droppedPin: com.mbk.halatuju.core.model.Place? = null
+        waypoints: List<Place> = emptyList(),
+        droppedPin: Place? = null,
+        activeRoute: NavRoute? = null,
+        alternativeRoutes: List<NavRoute> = emptyList(),
+        selectedRouteIndex: Int = 0
     ): MapRenderingState {
         val fix = state.latestFix
         val center = fix?.position ?: KlDefaults.KLCC
@@ -135,6 +149,9 @@ class MainViewModel @Inject constructor(
                 tiltDegrees = if (state.tiltPreviewEnabled) 48.0 else 0.0
             ),
             puckState = puck,
+            activeRoute = activeRoute,
+            alternativeRoutes = alternativeRoutes,
+            selectedRouteIndex = selectedRouteIndex,
             waypoints = waypoints,
             droppedPin = droppedPin,
             debugOverlayEnabled = state.settings.developerDebugOverlayEnabled

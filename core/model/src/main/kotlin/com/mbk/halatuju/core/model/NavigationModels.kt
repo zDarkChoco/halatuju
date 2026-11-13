@@ -163,6 +163,7 @@ data class NavRoute(
     val adjustedDurationSeconds: Double,
     val trafficEstimated: Boolean,
     val trafficDelayFactor: Double = 1.0,
+    val trafficLabel: String = "estimated",
     val legs: List<RouteLeg>,
     val waypoints: List<Place>,
     val summaryLabel: String = ""

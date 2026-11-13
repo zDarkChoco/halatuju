@@ -7,9 +7,13 @@ import com.mbk.halatuju.core.geocoding.SearchDebouncer
 import com.mbk.halatuju.core.location.LocationSourceCoordinator
 import com.mbk.halatuju.core.model.AppSettings
 import com.mbk.halatuju.core.model.FavoriteKind
+import com.mbk.halatuju.core.model.GeoMath
 import com.mbk.halatuju.core.model.KlDefaults
 import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.Place
+import com.mbk.halatuju.core.model.RoutingAvoidances
+import com.mbk.halatuju.core.routing.RouteRequest
+import com.mbk.halatuju.core.routing.Router
 import com.mbk.halatuju.core.storage.PlaceRepository
 import com.mbk.halatuju.core.storage.SettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -19,6 +23,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -32,25 +38,60 @@ private data class DraftSearchState(
     val focusedField: SearchField? = null,
     val fromQueryText: String = SearchUiState.MY_LOCATION_LABEL,
     val toQueryText: String = "",
+    val stopQueryText: String = "",
     val pendingFavoriteAssignment: FavoriteKind? = null,
     val isSearching: Boolean = false,
     val searchError: String? = null,
     val suggestions: List<Place> = emptyList(),
-    val droppedPin: DroppedPinState? = null
+    val droppedPin: DroppedPinState? = null,
+    val routePreview: RoutePreviewUiState = RoutePreviewUiState()
+)
+
+private data class RouteInputs(
+    val fromEndpoint: RouteEndpoint,
+    val intermediateStops: List<Place>,
+    val toEndpoint: RouteEndpoint?
+)
+
+private data class ResolvedRouteQuery(
+    val waypoints: List<Place>,
+    val avoidances: RoutingAvoidances,
+    val valhallaBaseUrl: String,
+    val refreshTick: Int
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
-class SearchViewModel @Inject constructor(
+class SearchViewModel internal constructor(
     private val geocoder: Geocoder,
+    private val router: Router,
     private val placeRepository: PlaceRepository,
     private val settingsStore: SettingsStore,
-    private val locationSourceCoordinator: LocationSourceCoordinator
+    private val locationSourceCoordinator: LocationSourceCoordinator,
+    private val clockMs: () -> Long
 ) : ViewModel() {
+
+    @Inject
+    constructor(
+        geocoder: Geocoder,
+        router: Router,
+        placeRepository: PlaceRepository,
+        settingsStore: SettingsStore,
+        locationSourceCoordinator: LocationSourceCoordinator
+    ) : this(
+        geocoder = geocoder,
+        router = router,
+        placeRepository = placeRepository,
+        settingsStore = settingsStore,
+        locationSourceCoordinator = locationSourceCoordinator,
+        clockMs = { System.currentTimeMillis() }
+    )
 
     private val draft = MutableStateFlow(DraftSearchState())
     private val rawQueryFlow = MutableStateFlow("")
+    private val routeRefreshTrigger = MutableStateFlow(0)
     private var latestSettings: AppSettings = AppSettings()
+    private var myLocationRouteAnchor: LatLng? = null
 
     val uiState: StateFlow<SearchUiState> = combine(
         draft,
@@ -67,6 +108,7 @@ class SearchViewModel @Inject constructor(
             focusedField = d.focusedField,
             fromQueryText = d.fromQueryText,
             toQueryText = d.toQueryText,
+            stopQueryText = d.stopQueryText,
             pendingFavoriteAssignment = d.pendingFavoriteAssignment,
             isSearching = d.isSearching,
             searchError = d.searchError,
@@ -74,6 +116,7 @@ class SearchViewModel @Inject constructor(
             recents = recents,
             favorites = favorites,
             droppedPin = d.droppedPin,
+            routePreview = d.routePreview,
             distanceAnchor = latestFix?.position ?: KlDefaults.KLCC,
             unitSystem = settings.unitSystem
         )
@@ -84,6 +127,7 @@ class SearchViewModel @Inject constructor(
     )
 
     init {
+        // Photon search-as-you-type debounced to 300 ms with device location bias
         viewModelScope.launch {
             SearchDebouncer.debounceQueries(rawQueryFlow, SearchDebouncer.DEFAULT_DEBOUNCE_MS)
                 .collectLatest { trimmed ->
@@ -133,6 +177,121 @@ class SearchViewModel @Inject constructor(
                     )
                 }
         }
+
+        // Reactive routing when endpoints, intermediate stops, avoidances, or Valhalla server URL change
+        val stabilizedAnchorFlow = locationSourceCoordinator.latestFix
+            .map { fix ->
+                val rawPos = fix?.position ?: KlDefaults.KLCC
+                val current = myLocationRouteAnchor
+                if (current == null || GeoMath.haversineMeters(current, rawPos) > 150.0) {
+                    myLocationRouteAnchor = rawPos
+                    rawPos
+                } else {
+                    current
+                }
+            }
+            .distinctUntilChanged()
+
+        viewModelScope.launch {
+            combine(
+                draft.map { RouteInputs(it.fromEndpoint, it.intermediateStops, it.toEndpoint) }
+                    .distinctUntilChanged(),
+                settingsStore.settings
+                    .map { it.avoidances to it.endpoints.valhallaBaseUrl }
+                    .distinctUntilChanged(),
+                stabilizedAnchorFlow,
+                routeRefreshTrigger
+            ) { inputs, (avoidances, valhallaUrl), anchor, refreshTick ->
+                val destEndpoint = inputs.toEndpoint
+                if (destEndpoint == null) {
+                    null
+                } else {
+                    val originPlace = resolveEndpointPlace(inputs.fromEndpoint, anchor, id = "origin:me")
+                    val destPlace = resolveEndpointPlace(destEndpoint, anchor, id = "dest:me")
+                    ResolvedRouteQuery(
+                        waypoints = listOf(originPlace) + inputs.intermediateStops + destPlace,
+                        avoidances = avoidances,
+                        valhallaBaseUrl = valhallaUrl,
+                        refreshTick = refreshTick
+                    )
+                }
+            }
+                .distinctUntilChanged()
+                .collectLatest { query ->
+                    if (query == null) {
+                        draft.update { it.copy(routePreview = RoutePreviewUiState()) }
+                        return@collectLatest
+                    }
+                    val first = query.waypoints.first()
+                    val last = query.waypoints.last()
+                    if (query.waypoints.size == 2 &&
+                        GeoMath.haversineMeters(first.location, last.location) < 20.0
+                    ) {
+                        draft.update {
+                            it.copy(
+                                routePreview = RoutePreviewUiState(
+                                    isLoading = false,
+                                    candidateRoutes = emptyList(),
+                                    errorMessage = "Origin and destination are the same location.",
+                                    activeAvoidances = query.avoidances
+                                )
+                            )
+                        }
+                        return@collectLatest
+                    }
+
+                    draft.update {
+                        it.copy(
+                            routePreview = it.routePreview.copy(
+                                isLoading = true,
+                                errorMessage = null,
+                                activeAvoidances = query.avoidances
+                            )
+                        )
+                    }
+
+                    val nowMs = clockMs()
+                    val result = router.calculateRoutes(
+                        RouteRequest(
+                            waypoints = query.waypoints,
+                            avoidances = query.avoidances,
+                            preferAlternates = query.waypoints.size <= 2,
+                            departureEpochMs = nowMs,
+                            baseUrlOverride = query.valhallaBaseUrl
+                        )
+                    )
+                    result.fold(
+                        onSuccess = { routes ->
+                            draft.update {
+                                it.copy(
+                                    routePreview = RoutePreviewUiState(
+                                        isLoading = false,
+                                        candidateRoutes = routes.take(3),
+                                        selectedRouteIndex = 0,
+                                        errorMessage = null,
+                                        referenceEpochMs = nowMs,
+                                        activeAvoidances = query.avoidances
+                                    )
+                                )
+                            }
+                        },
+                        onFailure = { err ->
+                            draft.update {
+                                it.copy(
+                                    routePreview = RoutePreviewUiState(
+                                        isLoading = false,
+                                        candidateRoutes = emptyList(),
+                                        selectedRouteIndex = 0,
+                                        errorMessage = err.message ?: "Unable to calculate route right now.",
+                                        referenceEpochMs = nowMs,
+                                        activeAvoidances = query.avoidances
+                                    )
+                                )
+                            }
+                        }
+                    )
+                }
+        }
     }
 
     fun onFieldFocused(field: SearchField) {
@@ -152,6 +311,7 @@ class SearchViewModel @Inject constructor(
                 focusedField = field,
                 fromQueryText = updatedFrom,
                 toQueryText = updatedTo,
+                stopQueryText = if (field == SearchField.STOP) "" else current.stopQueryText,
                 searchError = null,
                 suggestions = emptyList()
             )
@@ -159,6 +319,7 @@ class SearchViewModel @Inject constructor(
         val activeQuery = when (field) {
             SearchField.FROM -> draft.value.fromQueryText
             SearchField.TO -> draft.value.toQueryText
+            SearchField.STOP -> draft.value.stopQueryText
         }
         rawQueryFlow.value = activeQuery
     }
@@ -168,6 +329,7 @@ class SearchViewModel @Inject constructor(
             when (field) {
                 SearchField.FROM -> current.copy(focusedField = field, fromQueryText = value, searchError = null)
                 SearchField.TO -> current.copy(focusedField = field, toQueryText = value, searchError = null)
+                SearchField.STOP -> current.copy(focusedField = field, stopQueryText = value, searchError = null)
             }
         }
         rawQueryFlow.value = value
@@ -184,7 +346,14 @@ class SearchViewModel @Inject constructor(
                 )
                 SearchField.TO -> current.copy(
                     toEndpoint = null,
+                    intermediateStops = emptyList(),
                     toQueryText = "",
+                    suggestions = emptyList(),
+                    searchError = null,
+                    routePreview = RoutePreviewUiState()
+                )
+                SearchField.STOP -> current.copy(
+                    stopQueryText = "",
                     suggestions = emptyList(),
                     searchError = null
                 )
@@ -203,6 +372,7 @@ class SearchViewModel @Inject constructor(
                 pendingFavoriteAssignment = null,
                 fromQueryText = endpointLabel(current.fromEndpoint, defaultLabel = SearchUiState.MY_LOCATION_LABEL),
                 toQueryText = endpointLabel(current.toEndpoint, defaultLabel = ""),
+                stopQueryText = "",
                 isSearching = false,
                 searchError = null,
                 suggestions = emptyList()
@@ -221,6 +391,10 @@ class SearchViewModel @Inject constructor(
 
     fun onUseMyLocationSelected() {
         val targetField = draft.value.focusedField ?: SearchField.FROM
+        if (targetField == SearchField.STOP) {
+            dismissSearchFocus()
+            return
+        }
         draft.update { current ->
             when (targetField) {
                 SearchField.FROM -> current.copy(
@@ -237,6 +411,7 @@ class SearchViewModel @Inject constructor(
                     pendingFavoriteAssignment = null,
                     suggestions = emptyList()
                 )
+                SearchField.STOP -> current
             }
         }
         rawQueryFlow.value = ""
@@ -273,6 +448,21 @@ class SearchViewModel @Inject constructor(
                     suggestions = emptyList(),
                     searchError = null
                 )
+                SearchField.STOP -> {
+                    val updatedStops = if (d.intermediateStops.size < SearchUiState.MAX_INTERMEDIATE_STOPS) {
+                        d.intermediateStops + place
+                    } else {
+                        d.intermediateStops
+                    }
+                    d.copy(
+                        intermediateStops = updatedStops,
+                        stopQueryText = "",
+                        focusedField = null,
+                        pendingFavoriteAssignment = null,
+                        suggestions = emptyList(),
+                        searchError = null
+                    )
+                }
             }
         }
         rawQueryFlow.value = ""
@@ -287,12 +477,76 @@ class SearchViewModel @Inject constructor(
             current.copy(
                 fromEndpoint = newFrom,
                 toEndpoint = newTo,
+                intermediateStops = current.intermediateStops.reversed(),
                 fromQueryText = endpointLabel(newFrom, defaultLabel = SearchUiState.MY_LOCATION_LABEL),
                 toQueryText = endpointLabel(newTo, defaultLabel = ""),
                 focusedField = null,
                 pendingFavoriteAssignment = null,
                 suggestions = emptyList(),
                 searchError = null
+            )
+        }
+        rawQueryFlow.value = ""
+    }
+
+    fun onAddStopClick() {
+        if (draft.value.intermediateStops.size >= SearchUiState.MAX_INTERMEDIATE_STOPS) return
+        onFieldFocused(SearchField.STOP)
+    }
+
+    fun onMoveStopUp(index: Int) {
+        draft.update { current ->
+            if (index !in 1 until current.intermediateStops.size) return@update current
+            val mutable = current.intermediateStops.toMutableList()
+            val item = mutable.removeAt(index)
+            mutable.add(index - 1, item)
+            current.copy(intermediateStops = mutable)
+        }
+    }
+
+    fun onMoveStopDown(index: Int) {
+        draft.update { current ->
+            if (index < 0 || index >= current.intermediateStops.lastIndex) return@update current
+            val mutable = current.intermediateStops.toMutableList()
+            val item = mutable.removeAt(index)
+            mutable.add(index + 1, item)
+            current.copy(intermediateStops = mutable)
+        }
+    }
+
+    fun onRemoveStop(index: Int) {
+        draft.update { current ->
+            if (index !in current.intermediateStops.indices) return@update current
+            val mutable = current.intermediateStops.toMutableList()
+            mutable.removeAt(index)
+            current.copy(intermediateStops = mutable)
+        }
+    }
+
+    fun onSelectAlternativeRoute(index: Int) {
+        draft.update { current ->
+            if (index !in current.routePreview.candidateRoutes.indices) return@update current
+            current.copy(
+                routePreview = current.routePreview.copy(selectedRouteIndex = index)
+            )
+        }
+    }
+
+    fun onRetryRoute() {
+        routeRefreshTrigger.value += 1
+    }
+
+    fun onClearRoute() {
+        draft.update { current ->
+            current.copy(
+                toEndpoint = null,
+                intermediateStops = emptyList(),
+                toQueryText = "",
+                stopQueryText = "",
+                focusedField = null,
+                suggestions = emptyList(),
+                searchError = null,
+                routePreview = RoutePreviewUiState()
             )
         }
         rawQueryFlow.value = ""
@@ -425,6 +679,17 @@ class SearchViewModel @Inject constructor(
                     toQueryText = place.name,
                     droppedPin = null
                 )
+                SearchField.STOP -> {
+                    val updatedStops = if (current.intermediateStops.size < SearchUiState.MAX_INTERMEDIATE_STOPS) {
+                        current.intermediateStops + place
+                    } else {
+                        current.intermediateStops
+                    }
+                    current.copy(
+                        intermediateStops = updatedStops,
+                        droppedPin = null
+                    )
+                }
             }
         }
     }
@@ -448,6 +713,22 @@ class SearchViewModel @Inject constructor(
 
     fun onDismissDroppedPin() {
         draft.update { it.copy(droppedPin = null) }
+    }
+
+    private fun resolveEndpointPlace(
+        endpoint: RouteEndpoint,
+        anchor: LatLng,
+        id: String
+    ): Place {
+        return when (endpoint) {
+            is RouteEndpoint.SelectedPlace -> endpoint.place
+            is RouteEndpoint.MyLocation -> Place(
+                id = id,
+                name = SearchUiState.MY_LOCATION_LABEL,
+                subtitle = "",
+                location = anchor
+            )
+        }
     }
 
     private fun endpointLabel(endpoint: RouteEndpoint?, defaultLabel: String): String {
