@@ -21,6 +21,8 @@ import com.mbk.halatuju.core.map.theme.HalaTujuTheme
 import com.mbk.halatuju.core.model.AppSettings
 import com.mbk.halatuju.core.model.DebugOverlayData
 import com.mbk.halatuju.core.model.KlDefaults
+import com.mbk.halatuju.core.model.LaneIndication
+import com.mbk.halatuju.core.model.LaneInfo
 import com.mbk.halatuju.core.model.LatLng
 import com.mbk.halatuju.core.model.LocationFix
 import com.mbk.halatuju.core.model.LocationProviderKind
@@ -38,6 +40,7 @@ import com.mbk.halatuju.core.navigation.NavigationSessionState
 import com.mbk.halatuju.core.navigation.NavigationStatus
 import com.mbk.halatuju.core.navigation.OverspeedState
 import com.mbk.halatuju.core.navigation.SecondaryManeuverPreview
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -48,6 +51,38 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.time.ZoneId
+
+class LaneGuidanceUnitTest {
+
+    @Test
+    fun `lane sanitizer hides empty, none-only, or all-invalid lanes and cleans valid combinations`() {
+        assertTrue(sanitizeLanesForDisplay(emptyList()).isEmpty())
+        assertTrue(
+            sanitizeLanesForDisplay(
+                listOf(LaneInfo(listOf(LaneIndication.NONE), valid = true))
+            ).isEmpty()
+        )
+        assertTrue(
+            sanitizeLanesForDisplay(
+                listOf(
+                    LaneInfo(listOf(LaneIndication.STRAIGHT), valid = false),
+                    LaneInfo(listOf(LaneIndication.RIGHT), valid = false)
+                )
+            ).isEmpty()
+        )
+
+        val cleaned = sanitizeLanesForDisplay(
+            listOf(
+                LaneInfo(listOf(LaneIndication.NONE), valid = false),
+                LaneInfo(listOf(LaneIndication.STRAIGHT, LaneIndication.NONE, LaneIndication.STRAIGHT), valid = false),
+                LaneInfo(listOf(LaneIndication.STRAIGHT, LaneIndication.SLIGHT_RIGHT), valid = true)
+            )
+        )
+        assertEquals(2, cleaned.size)
+        assertEquals(listOf(LaneIndication.STRAIGHT), cleaned[0].indications)
+        assertEquals(listOf(LaneIndication.STRAIGHT, LaneIndication.SLIGHT_RIGHT), cleaned[1].indications)
+    }
+}
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -157,6 +192,8 @@ class ActiveNavigationScreenshotTest {
         composeRule.onNodeWithTag("active_navigation_screen").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_maneuver_banner").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_then_chip").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_lane_guidance_strip").assertDoesNotExist()
+        composeRule.onNodeWithTag("nav_current_speed").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_speed_limit_badge").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_overview_button").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_end_button").assertIsDisplayed()
@@ -252,12 +289,189 @@ class ActiveNavigationScreenshotTest {
             }
         }
 
+        composeRule.onNodeWithTag("nav_rotary_exit_badge").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_current_speed").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_speed_limit_badge").assertIsDisplayed()
         composeRule.onNodeWithTag("nav_recenter_button").assertIsDisplayed()
         composeRule.onNodeWithTag("rerouting_pill").assertIsDisplayed()
         composeRule.onNodeWithTag("gps_weak_pill").assertIsDisplayed()
         composeRule.onNodeWithText("© OpenStreetMap contributors").assertIsDisplayed()
 
         composeRule.onRoot().captureRoboImage("../../docs/screenshots/m4_active_nav_dark.png")
+    }
+
+    @Test
+    fun m5NavWithMultiLaneGuidanceCombinationsLight() {
+        val tileSource = OpenFreeMapTileSource(RuntimeEnvironment.getApplication())
+        val route = sampleRoute()
+        val puckPos = LatLng(3.0450, 101.6890)
+        val uiState = ActiveNavigationUiState(
+            session = NavigationSessionState(
+                status = NavigationStatus.ACTIVE,
+                route = route,
+                distanceAlongRouteMeters = 13_500.0,
+                remainingDistanceMeters = 40_700.0,
+                remainingDurationSeconds = 2_340.0,
+                estimatedArrivalEpochMs = 1_778_583_540_000L,
+                etaTrafficLabel = "estimated · evening peak traffic",
+                cameraMode = MapCameraMode.NAVIGATION_25D,
+                cameraState = MapCameraState(
+                    mode = MapCameraMode.NAVIGATION_25D,
+                    center = puckPos,
+                    zoom = 16.5,
+                    bearingDegrees = 185.0,
+                    tiltDegrees = 52.0
+                ),
+                puckState = PuckRenderState(
+                    position = puckPos,
+                    bearingDegrees = 185f,
+                    accuracyMeters = 6f
+                ),
+                banner = GuidanceBannerState(
+                    maneuverType = ManeuverType.OFF_RAMP,
+                    maneuverModifier = ManeuverModifier.SLIGHT_LEFT,
+                    distanceToManeuverMeters = 240.0,
+                    primaryText = "Susur Keluar KLIA",
+                    secondaryDestinations = "KLIA Terminal 1 / Terminal 2",
+                    exitShieldText = "1201B",
+                    lanes = listOf(
+                        LaneInfo(listOf(LaneIndication.SHARP_LEFT, LaneIndication.SLIGHT_LEFT), valid = true),
+                        LaneInfo(listOf(LaneIndication.SLIGHT_LEFT, LaneIndication.STRAIGHT), valid = true),
+                        LaneInfo(listOf(LaneIndication.STRAIGHT), valid = false),
+                        LaneInfo(listOf(LaneIndication.STRAIGHT), valid = false),
+                        LaneInfo(listOf(LaneIndication.STRAIGHT, LaneIndication.RIGHT), valid = false)
+                    ),
+                    thenStep = SecondaryManeuverPreview(
+                        maneuverType = ManeuverType.MERGE,
+                        maneuverModifier = ManeuverModifier.SLIGHT_RIGHT,
+                        roadName = "Lebuhraya Elite"
+                    )
+                ),
+                overspeed = OverspeedState(
+                    currentSpeedKmh = 96,
+                    speedLimit = SegmentSpeedLimit(speedKmh = 110, isExplicitNone = false, isUnknown = false),
+                    isOverspeeding = false
+                )
+            ),
+            settings = AppSettings(themeMode = ThemeMode.LIGHT)
+        )
+
+        composeRule.setContent {
+            HalaTujuTheme(themeMode = ThemeMode.LIGHT) {
+                ActiveNavigationScreen(
+                    uiState = uiState,
+                    tileSource = tileSource,
+                    isDarkTheme = false,
+                    onUserPanMap = {},
+                    onToggleOverview = {},
+                    onRecenterClick = {},
+                    onToggleMute = {},
+                    onContinueToNextStop = {},
+                    onEndNavigation = {},
+                    onOpenAbout = {},
+                    clockZoneId = klZone
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("nav_lane_guidance_strip").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_lane_slot_0").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_lane_slot_4").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_then_chip").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_exit_shield").assertIsDisplayed()
+
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m5_nav_lanes_light.png")
+    }
+
+    @Test
+    fun m5NavOverspeedAlertWithComplexLanesDarkAndUnknownSpeedLimitHiddenCheck() {
+        val tileSource = OpenFreeMapTileSource(RuntimeEnvironment.getApplication())
+        val route = sampleRoute()
+        val puckPos = LatLng(3.0450, 101.6890)
+        var showUnknownLimit by mutableStateOf(false)
+
+        composeRule.setContent {
+            val uiState = ActiveNavigationUiState(
+                session = NavigationSessionState(
+                    status = NavigationStatus.ACTIVE,
+                    route = route,
+                    distanceAlongRouteMeters = 13_500.0,
+                    remainingDistanceMeters = 18_400.0,
+                    remainingDurationSeconds = 1_140.0,
+                    estimatedArrivalEpochMs = 1_778_582_340_000L,
+                    etaTrafficLabel = "estimated",
+                    cameraMode = MapCameraMode.NAVIGATION_25D,
+                    cameraState = MapCameraState(
+                        mode = MapCameraMode.NAVIGATION_25D,
+                        center = puckPos,
+                        zoom = 15.8,
+                        bearingDegrees = 185.0,
+                        tiltDegrees = 52.0
+                    ),
+                    puckState = PuckRenderState(
+                        position = puckPos,
+                        bearingDegrees = 185f,
+                        accuracyMeters = 7f
+                    ),
+                    banner = GuidanceBannerState(
+                        maneuverType = ManeuverType.TURN,
+                        maneuverModifier = ManeuverModifier.RIGHT,
+                        distanceToManeuverMeters = 350.0,
+                        primaryText = "Jalan Tun Razak",
+                        secondaryDestinations = "Ampang / Cheras",
+                        lanes = if (showUnknownLimit) {
+                            listOf(LaneInfo(listOf(LaneIndication.NONE), valid = true))
+                        } else {
+                            listOf(
+                                LaneInfo(listOf(LaneIndication.UTURN, LaneIndication.LEFT), valid = false),
+                                LaneInfo(listOf(LaneIndication.STRAIGHT), valid = false),
+                                LaneInfo(listOf(LaneIndication.MERGE_RIGHT, LaneIndication.RIGHT), valid = true),
+                                LaneInfo(listOf(LaneIndication.SHARP_RIGHT), valid = false)
+                            )
+                        }
+                    ),
+                    overspeed = OverspeedState(
+                        currentSpeedKmh = 94,
+                        speedLimit = if (showUnknownLimit) {
+                            SegmentSpeedLimit(isUnknown = true)
+                        } else {
+                            SegmentSpeedLimit(speedKmh = 80, isExplicitNone = false, isUnknown = false)
+                        },
+                        isOverspeeding = !showUnknownLimit
+                    )
+                ),
+                settings = AppSettings(themeMode = ThemeMode.DARK)
+            )
+
+            HalaTujuTheme(themeMode = ThemeMode.DARK) {
+                ActiveNavigationScreen(
+                    uiState = uiState,
+                    tileSource = tileSource,
+                    isDarkTheme = true,
+                    onUserPanMap = {},
+                    onToggleOverview = {},
+                    onRecenterClick = {},
+                    onToggleMute = {},
+                    onContinueToNextStop = {},
+                    onEndNavigation = {},
+                    onOpenAbout = {},
+                    clockZoneId = klZone
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("nav_lane_guidance_strip").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_current_speed").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_speed_limit_badge").assertIsDisplayed()
+
+        composeRule.onRoot().captureRoboImage("../../docs/screenshots/m5_nav_overspeed_dark.png")
+
+        // Flip to unknown maxspeed and NONE-only lanes -> both speed limit badge and lane strip must hide cleanly
+        showUnknownLimit = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("nav_current_speed").assertIsDisplayed()
+        composeRule.onNodeWithTag("nav_speed_limit_badge").assertDoesNotExist()
+        composeRule.onNodeWithTag("nav_lane_guidance_strip").assertDoesNotExist()
     }
 }
 

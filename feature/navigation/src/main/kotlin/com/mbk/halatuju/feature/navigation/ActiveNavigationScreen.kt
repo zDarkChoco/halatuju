@@ -1,8 +1,10 @@
 package com.mbk.halatuju.feature.navigation
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -25,26 +27,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.automirrored.filled.AltRoute
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GpsOff
-import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material.icons.filled.RampLeft
-import androidx.compose.material.icons.filled.RampRight
-import androidx.compose.material.icons.filled.RoundaboutRight
-import androidx.compose.material.icons.filled.TurnLeft
-import androidx.compose.material.icons.filled.TurnRight
-import androidx.compose.material.icons.filled.TurnSharpLeft
-import androidx.compose.material.icons.filled.TurnSharpRight
-import androidx.compose.material.icons.filled.TurnSlightLeft
-import androidx.compose.material.icons.filled.TurnSlightRight
-import androidx.compose.material.icons.filled.UTurnLeft
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -57,11 +46,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -69,16 +61,17 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.mbk.halatuju.core.map.HalaTujuMapSurface
 import com.mbk.halatuju.core.map.TileSource
 import com.mbk.halatuju.core.map.theme.HalaTujuPalette
-import com.mbk.halatuju.core.model.ManeuverModifier
 import com.mbk.halatuju.core.model.ManeuverType
 import com.mbk.halatuju.core.model.MapCameraMode
 import com.mbk.halatuju.core.model.UnitSystem
 import com.mbk.halatuju.core.navigation.GuidanceBannerState
 import com.mbk.halatuju.core.navigation.NavigationSessionState
 import com.mbk.halatuju.core.navigation.NavigationStatus
+import com.mbk.halatuju.core.navigation.OverspeedState
 import java.time.ZoneId
 
 @Composable
@@ -117,6 +110,17 @@ fun ActiveNavigationScreen(
     ) {
         val isWide = maxWidth >= 600.dp
         val density = LocalDensity.current
+        var portraitBottomBarHeightPx by remember { mutableIntStateOf(0) }
+        val bottomBarClearanceDp = if (!isWide && session.status == NavigationStatus.ACTIVE) {
+            with(density) {
+                val measured = if (portraitBottomBarHeightPx > 0) portraitBottomBarHeightPx else 80.dp.roundToPx()
+                measured.toDp() + 14.dp
+            }
+        } else {
+            14.dp
+        }
+        val attributionClearanceForSpeedDp = with(density) { 28.sp.toDp() } + 14.dp
+
         val wideLeftInsetPx = with(density) {
             if (isWide) 396.dp.roundToPx() else 0
         }
@@ -125,8 +129,8 @@ fun ActiveNavigationScreen(
             state = mapState,
             tileSource = tileSource,
             attributionPadding = PaddingValues(
-                start = if (isWide) 406.dp else 12.dp,
-                bottom = if (isWide) 14.dp else 108.dp
+                start = if (isWide) 406.dp else 14.dp,
+                bottom = bottomBarClearanceDp + if (isWide) 0.dp else 4.dp
             ),
             leftPanelInsetPx = wideLeftInsetPx,
             onUserPanMap = onUserPanMap,
@@ -150,23 +154,12 @@ fun ActiveNavigationScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    if (session.status == NavigationStatus.ARRIVED_STOP) {
-                        StopArrivalCard(
-                            session = session,
-                            onContinue = onContinueToNextStop,
-                            onEnd = onEndNavigation
-                        )
-                    } else if (session.status == NavigationStatus.ARRIVED_DESTINATION) {
-                        DestinationArrivalCard(
-                            session = session,
-                            onDone = onEndNavigation
-                        )
-                    } else {
-                        ManeuverBannerCard(
-                            banner = session.banner,
-                            unitSystem = unitSystem
-                        )
-                    }
+                    GuidanceTopSection(
+                        session = session,
+                        unitSystem = unitSystem,
+                        onContinueToNextStop = onContinueToNextStop,
+                        onEndNavigation = onEndNavigation
+                    )
 
                     StatusBadgesRow(session = session)
 
@@ -189,23 +182,12 @@ fun ActiveNavigationScreen(
                         .fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (session.status == NavigationStatus.ARRIVED_STOP) {
-                        StopArrivalCard(
-                            session = session,
-                            onContinue = onContinueToNextStop,
-                            onEnd = onEndNavigation
-                        )
-                    } else if (session.status == NavigationStatus.ARRIVED_DESTINATION) {
-                        DestinationArrivalCard(
-                            session = session,
-                            onDone = onEndNavigation
-                        )
-                    } else {
-                        ManeuverBannerCard(
-                            banner = session.banner,
-                            unitSystem = unitSystem
-                        )
-                    }
+                    GuidanceTopSection(
+                        session = session,
+                        unitSystem = unitSystem,
+                        onContinueToNextStop = onContinueToNextStop,
+                        onEndNavigation = onEndNavigation
+                    )
                     StatusBadgesRow(session = session)
                 }
 
@@ -220,8 +202,30 @@ fun ActiveNavigationScreen(
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                             .widthIn(max = 460.dp)
                             .fillMaxWidth()
+                            .onSizeChanged { sz ->
+                                portraitBottomBarHeightPx = sz.height
+                            }
                     )
                 }
+            }
+
+            // Live GPS speed + round regulatory speed limit badge (hides badge cleanly if unknown)
+            if (session.status == NavigationStatus.ACTIVE) {
+                SpeedCluster(
+                    overspeed = session.overspeed,
+                    unitSystem = unitSystem,
+                    isDarkTheme = isDarkTheme,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(
+                            start = if (isWide) 406.dp else 14.dp,
+                            bottom = if (isWide) {
+                                46.dp
+                            } else {
+                                bottomBarClearanceDp + attributionClearanceForSpeedDp
+                            }
+                        )
+                )
             }
 
             // Floating navigation camera & audio controls on right edge
@@ -230,7 +234,7 @@ fun ActiveNavigationScreen(
                     .align(Alignment.BottomEnd)
                     .padding(
                         end = 14.dp,
-                        bottom = if (isWide || session.status != NavigationStatus.ACTIVE) 20.dp else 112.dp
+                        bottom = if (isWide || session.status != NavigationStatus.ACTIVE) 20.dp else bottomBarClearanceDp + 6.dp
                     ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End
@@ -316,18 +320,50 @@ fun ActiveNavigationScreen(
 }
 
 @Composable
+private fun GuidanceTopSection(
+    session: NavigationSessionState,
+    unitSystem: UnitSystem,
+    onContinueToNextStop: () -> Unit,
+    onEndNavigation: () -> Unit
+) {
+    when (session.status) {
+        NavigationStatus.ARRIVED_STOP -> StopArrivalCard(
+            session = session,
+            onContinue = onContinueToNextStop,
+            onEnd = onEndNavigation
+        )
+        NavigationStatus.ARRIVED_DESTINATION -> DestinationArrivalCard(
+            session = session,
+            onDone = onEndNavigation
+        )
+        else -> ManeuverBannerCard(
+            banner = session.banner,
+            unitSystem = unitSystem
+        )
+    }
+}
+
+@Composable
 private fun ManeuverBannerCard(
     banner: GuidanceBannerState,
     unitSystem: UnitSystem,
     modifier: Modifier = Modifier
 ) {
+    val visibleLanes = remember(banner.lanes) { sanitizeLanesForDisplay(banner.lanes) }
+    val hasAttachmentBelow = visibleLanes.isNotEmpty() || banner.thenStep != null
+    val isRoundabout = banner.maneuverType == ManeuverType.ROUNDABOUT ||
+        banner.maneuverType == ManeuverType.ROTARY ||
+        banner.maneuverType == ManeuverType.ROUNDABOUT_TURN ||
+        banner.maneuverType == ManeuverType.EXIT_ROUNDABOUT ||
+        banner.maneuverType == ManeuverType.EXIT_ROTARY
+
     Column(modifier = modifier.fillMaxWidth()) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("nav_maneuver_banner"),
-            shape = if (banner.thenStep != null) {
-                RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 8.dp, bottomEnd = 8.dp)
+            shape = if (hasAttachmentBelow) {
+                RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 6.dp)
             } else {
                 RoundedCornerShape(20.dp)
             },
@@ -346,24 +382,27 @@ private fun ManeuverBannerCard(
                 Box(
                     modifier = Modifier
                         .size(56.dp)
-                        .background(Color.White.copy(alpha = 0.14f), CircleShape),
+                        .background(Color.White.copy(alpha = 0.14f), CircleShape)
+                        .semantics {
+                            if (isRoundabout && banner.rotaryExitNumber != null) {
+                                contentDescription = "Roundabout exit ${banner.rotaryExitNumber}"
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = mapManeuverIcon(banner.maneuverType, banner.maneuverModifier),
-                        contentDescription = null,
+                    ManeuverIcon(
+                        maneuverType = banner.maneuverType,
+                        maneuverModifier = banner.maneuverModifier,
                         tint = Color.White,
-                        modifier = Modifier.size(34.dp)
+                        secondaryTint = Color.White.copy(alpha = 0.36f),
+                        modifier = Modifier.size(38.dp)
                     )
-                    if (banner.rotaryExitNumber != null &&
-                        (banner.maneuverType == ManeuverType.ROUNDABOUT ||
-                            banner.maneuverType == ManeuverType.ROTARY ||
-                            banner.maneuverType == ManeuverType.ROUNDABOUT_TURN)
-                    ) {
+                    if (banner.rotaryExitNumber != null && isRoundabout) {
                         Surface(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
-                                .size(22.dp),
+                                .size(22.dp)
+                                .testTag("nav_rotary_exit_badge"),
                             shape = CircleShape,
                             color = HalaTujuPalette.AmberAccent
                         ) {
@@ -397,6 +436,7 @@ private fun ManeuverBannerCard(
                         )
                         banner.exitShieldText?.let { shield ->
                             Surface(
+                                modifier = Modifier.testTag("nav_exit_shield"),
                                 shape = RoundedCornerShape(6.dp),
                                 color = HalaTujuPalette.AmberAccent
                             ) {
@@ -419,9 +459,10 @@ private fun ManeuverBannerCard(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    if (!banner.secondaryDestinations.isNullOrBlank()) {
+                    val dests = banner.secondaryDestinations
+                    if (!dests.isNullOrBlank()) {
                         Text(
-                            text = banner.secondaryDestinations!!,
+                            text = dests,
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.85f),
                             maxLines = 1,
@@ -430,6 +471,16 @@ private fun ManeuverBannerCard(
                     }
                 }
             }
+        }
+
+        if (visibleLanes.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(2.dp))
+            LaneGuidanceStrip(
+                lanes = visibleLanes,
+                upcomingModifier = banner.maneuverModifier,
+                attachedBelowBanner = true,
+                hasThenChipBelow = banner.thenStep != null
+            )
         }
 
         banner.thenStep?.let { thenStep ->
@@ -451,10 +502,11 @@ private fun ManeuverBannerCard(
                         style = MaterialTheme.typography.labelLarge,
                         color = HalaTujuPalette.CrispMint
                     )
-                    Icon(
-                        imageVector = mapManeuverIcon(thenStep.maneuverType, thenStep.maneuverModifier),
-                        contentDescription = null,
+                    ManeuverIcon(
+                        maneuverType = thenStep.maneuverType,
+                        maneuverModifier = thenStep.maneuverModifier,
                         tint = Color.White,
+                        secondaryTint = Color.White.copy(alpha = 0.36f),
                         modifier = Modifier.size(18.dp)
                     )
                     if (thenStep.roadName.isNotBlank()) {
@@ -467,6 +519,95 @@ private fun ManeuverBannerCard(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeedCluster(
+    overspeed: OverspeedState,
+    unitSystem: UnitSystem,
+    isDarkTheme: Boolean = isSystemInDarkTheme(),
+    modifier: Modifier = Modifier
+) {
+    val speedVal = NavigationFormatters.formatSpeedValue(overspeed.currentSpeedKmh, unitSystem)
+    val unitLabel = NavigationFormatters.speedUnitLabel(unitSystem)
+    val limitKmh = overspeed.speedLimit.speedKmh
+    val showSpeedBadge = !overspeed.speedLimit.isUnknown &&
+        !overspeed.speedLimit.isExplicitNone &&
+        limitKmh != null
+
+    val isOver = overspeed.isOverspeeding
+    val speedCardBg = when {
+        isOver && isDarkTheme -> Color(0xFF3A1214).copy(alpha = 0.96f)
+        isOver -> Color(0xFFFFEBEB).copy(alpha = 0.98f)
+        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+    }
+    val speedCardText = if (isOver) HalaTujuPalette.SpeedLimitRed else MaterialTheme.colorScheme.onSurface
+    val speedCardBorder = if (isOver) BorderStroke(1.5.dp, HalaTujuPalette.SpeedLimitRed) else null
+
+    Row(
+        modifier = modifier.testTag("nav_speed_cluster"),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier
+                .testTag("nav_current_speed")
+                .semantics {
+                    contentDescription = if (isOver) {
+                        "Current speed $speedVal $unitLabel, exceeding speed limit"
+                    } else {
+                        "Current speed $speedVal $unitLabel"
+                    }
+                },
+            shape = RoundedCornerShape(14.dp),
+            color = speedCardBg,
+            border = speedCardBorder,
+            tonalElevation = 4.dp,
+            shadowElevation = 4.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = speedVal.toString(),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = speedCardText
+                )
+                Text(
+                    text = unitLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isOver) HalaTujuPalette.SpeedLimitRed else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (showSpeedBadge) {
+            val limitVal = NavigationFormatters.formatSpeedValue(
+                limitKmh,
+                unitSystem
+            )
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .background(Color.White, CircleShape)
+                    .border(4.dp, HalaTujuPalette.SpeedLimitRed, CircleShape)
+                    .testTag("nav_speed_limit_badge")
+                    .semantics {
+                        contentDescription = "Speed limit $limitVal $unitLabel"
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = limitVal.toString(),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF161D1D)
+                )
             }
         }
     }
@@ -648,10 +789,6 @@ private fun NavigationBottomBar(
     onEndNavigation: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val showSpeedBadge = !session.overspeed.speedLimit.isUnknown &&
-        !session.overspeed.speedLimit.isExplicitNone &&
-        session.overspeed.speedLimit.speedKmh != null
-
     Card(
         modifier = modifier.testTag("nav_bottom_bar"),
         shape = RoundedCornerShape(22.dp),
@@ -668,29 +805,6 @@ private fun NavigationBottomBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            if (showSpeedBadge) {
-                val limitVal = NavigationFormatters.formatSpeedValue(
-                    session.overspeed.speedLimit.speedKmh!!,
-                    unitSystem
-                )
-                Box(
-                    modifier = Modifier
-                        .padding(end = 12.dp)
-                        .size(48.dp)
-                        .background(Color.White, CircleShape)
-                        .border(4.dp, HalaTujuPalette.SpeedLimitRed, CircleShape)
-                        .testTag("nav_speed_limit_badge"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = limitVal.toString(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF161D1D)
-                    )
-                }
-            }
-
             Column(modifier = Modifier.weight(1f)) {
                 Row(
                     verticalAlignment = Alignment.Bottom,
@@ -741,30 +855,6 @@ private fun NavigationBottomBar(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("End")
             }
-        }
-    }
-}
-
-private fun mapManeuverIcon(type: ManeuverType, modifier: ManeuverModifier): ImageVector {
-    return when (type) {
-        ManeuverType.ROUNDABOUT, ManeuverType.ROTARY, ManeuverType.ROUNDABOUT_TURN,
-        ManeuverType.EXIT_ROUNDABOUT, ManeuverType.EXIT_ROTARY -> Icons.Default.RoundaboutRight
-        ManeuverType.MERGE -> Icons.Default.Merge
-        ManeuverType.OFF_RAMP, ManeuverType.ON_RAMP, ManeuverType.FORK -> when (modifier) {
-            ManeuverModifier.SLIGHT_LEFT, ManeuverModifier.LEFT, ManeuverModifier.SHARP_LEFT -> Icons.Default.RampLeft
-            else -> Icons.Default.RampRight
-        }
-        ManeuverType.DEPART -> Icons.Default.Navigation
-        ManeuverType.ARRIVE -> Icons.Default.CheckCircle
-        else -> when (modifier) {
-            ManeuverModifier.SHARP_LEFT -> Icons.Default.TurnSharpLeft
-            ManeuverModifier.LEFT -> Icons.Default.TurnLeft
-            ManeuverModifier.SLIGHT_LEFT -> Icons.Default.TurnSlightLeft
-            ManeuverModifier.SLIGHT_RIGHT -> Icons.Default.TurnSlightRight
-            ManeuverModifier.RIGHT -> Icons.Default.TurnRight
-            ManeuverModifier.SHARP_RIGHT -> Icons.Default.TurnSharpRight
-            ManeuverModifier.UTURN -> Icons.Default.UTurnLeft
-            ManeuverModifier.STRAIGHT, ManeuverModifier.NONE -> Icons.Default.ArrowUpward
         }
     }
 }

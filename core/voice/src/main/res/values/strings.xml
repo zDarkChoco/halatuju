@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Structured spoken prompt templates ready for values-ms (Bahasa Melayu) translation without code changes. -->
+<resources>
+    <string name="voice_stage_depart_road">Proceed onto %1$s.</string>
+    <string name="voice_stage_depart_generic">Follow the route.</string>
+    <string name="voice_stage_in_distance">In %1$s, %2$s.</string>
+    <string name="voice_stage_now">%1$s.</string>
+    <string name="voice_stage_approaching_destination">Approaching %1$s.</string>
+    <string name="voice_stage_approaching_generic">Your destination is just ahead.</string>
+    <string name="voice_stage_arrive_stop_named">Arrived at stop %1$d, %2$s.</string>
+    <string name="voice_stage_arrive_stop_generic">Arrived at stop %1$d.</string>
+    <string name="voice_stage_arrive_destination_named">You have arrived at %1$s.</string>
+    <string name="voice_stage_arrive_destination_generic">You have arrived at your destination.</string>
+
+    <string name="voice_dist_meters">%1$d meters</string>
+    <string name="voice_dist_km_whole">%1$d kilometers</string>
+    <string name="voice_dist_km_decimal">%1$s kilometers</string>
+    <string name="voice_dist_feet">%1$d feet</string>
+    <string name="voice_dist_miles_whole">%1$d miles</string>
+    <string name="voice_dist_miles_decimal">%1$s miles</string>
+
+    <string name="voice_action_roundabout_exit">take exit %1$d</string>
+    <string name="voice_action_roundabout_enter">enter the roundabout</string>
+    <string name="voice_action_ramp_mod">take %1$s</string>
+    <string name="voice_action_ramp_exit_mod">take exit %1$s %2$s</string>
+    <string name="voice_action_merge">merge</string>
+    <string name="voice_action_arrive_named">you will arrive at %1$s</string>
+    <string name="voice_action_arrive_generic">you will reach your destination</string>
+    <string name="voice_action_uturn">make a U-turn</string>
+    <string name="voice_action_straight">continue straight</string>
+    <string name="voice_action_turn_mod">turn %1$s</string>
+    <string name="voice_action_continue">continue</string>
+
+    <string name="voice_prep_onto">%1$s onto %2$s</string>
+    <string name="voice_prep_towards">%1$s towards %2$s</string>
+
+    <string name="voice_mod_sharp_left">sharp left</string>
+    <string name="voice_mod_left">left</string>
+    <string name="voice_mod_slight_left">slight left</string>
+    <string name="voice_mod_straight">straight</string>
+    <string name="voice_mod_slight_right">slight right</string>
+    <string name="voice_mod_right">right</string>
+    <string name="voice_mod_sharp_right">sharp right</string>
+    <string name="voice_mod_uturn">U-turn</string>
+</resources>

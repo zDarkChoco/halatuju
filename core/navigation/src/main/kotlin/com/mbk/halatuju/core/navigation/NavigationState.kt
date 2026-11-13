@@ -75,5 +75,6 @@ data class NavigationSessionState(
 
 data class VoicePromptEvent(
     val id: Long,
-    val text: String
+    val text: String,
+    val cue: com.mbk.halatuju.core.model.VoicePromptCue? = null
 )

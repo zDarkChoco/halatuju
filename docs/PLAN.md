@@ -36,13 +36,13 @@
   - [x] Wire `FLAG_KEEP_SCREEN_ON` strictly while active navigation is visible on screen
   - [x] Add comprehensive JVM unit tests (Kalman outlier rejection, 359°→0° wrap, parallel-road/overpass snap rejection, 5–8 s + N-fix off-route hysteresis, tunnel dead reckoning, auto-zoom hysteresis + 300 m maneuver zoom-in)
 
-- [ ] **M5 — Banner, Lane Guidance, Speed Limit, Overspeed Chime, Voice**
-  - [ ] Build Top Maneuver Banner (maneuver arrow, distance, street/exit name, signpost/exit number badge, `"Then ..."` chip, roundabout exit number + arrow)
-  - [ ] Build Dynamic Vector Lane Guidance Strip (all indications + combinations, valid-lane highlight, hidden gracefully when OSM has no lane tags)
-  - [ ] Build Speed Limit Badge (regulatory circle, hidden when unknown) + live speed + red overspeed tint & single-chime hysteresis (`+5 km/h` default tolerance)
-  - [ ] Implement `:core:voice` (`AndroidTtsSpeaker` with distance/speed-scaled early/medium/final announcements, once-per-stage dedupe, transient ducking audio focus, Bluetooth support, mute toggle, BM-ready string keys)
-  - [ ] Build Bottom Progress Strip (remaining time, distance, arrival clock time, End button)
-  - [ ] Add unit tests (lane parser, maxspeed parser, TTS stage scheduler, overspeed hysteresis) + screenshot tests
+- [x] **M5 — Banner, Lane Guidance, Speed Limit, Overspeed Chime, Voice**
+  - [x] Build Top Maneuver Banner (maneuver arrow, distance, street/exit name, signpost/exit number badge, `"Then ..."` chip, roundabout exit number + arrow)
+  - [x] Build Dynamic Vector Lane Guidance Strip (all indications + combinations, valid-lane highlight, hidden gracefully when OSM has no lane tags)
+  - [x] Build Speed Limit Badge (regulatory circle, hidden when unknown) + live speed + red overspeed tint & single-chime hysteresis (`+5 km/h` default tolerance)
+  - [x] Implement `:core:voice` (`AndroidTtsSpeaker` with distance/speed-scaled early/medium/final announcements, once-per-stage dedupe, transient ducking audio focus, Bluetooth support, mute toggle, BM-ready string keys)
+  - [x] Build Bottom Progress Strip (remaining time, distance, arrival clock time, End button)
+  - [x] Add unit tests (lane parser, maxspeed parser, TTS stage scheduler, overspeed hysteresis) + screenshot tests
 
 - [ ] **M6 — Foreground Service + Android 16 Live Update Notification**
   - [ ] Implement `NavigationForegroundService` (`foregroundServiceType="location"`)

@@ -87,7 +87,7 @@ class NavigationEngine {
         val departCue = voiceTracker.markDepartIfNeeded(0, firstRoad)
         if (departCue != null) {
             voiceTriggerSeq += 1
-            lastVoicePrompt = VoicePromptEvent(voiceTriggerSeq, departCue.toDefaultEnglishSpeech())
+            lastVoicePrompt = VoicePromptEvent(voiceTriggerSeq, departCue.toDefaultEnglishSpeech(), departCue)
         }
 
         val initialPos = route.geometry.firstOrNull() ?: LatLng(0.0, 0.0)
@@ -381,7 +381,7 @@ class NavigationEngine {
 
         if (cue != null) {
             voiceTriggerSeq += 1
-            lastVoicePrompt = VoicePromptEvent(voiceTriggerSeq, cue.toDefaultEnglishSpeech())
+            lastVoicePrompt = VoicePromptEvent(voiceTriggerSeq, cue.toDefaultEnglishSpeech(), cue)
         }
 
         val targetZoom = autoZoom.update(
